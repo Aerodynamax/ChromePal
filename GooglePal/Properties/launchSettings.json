@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "GooglePal (Package)": {
+      "commandName": "MsixPackage",
+      "doNotLaunchApp": true
+    },
+    "GooglePal (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
