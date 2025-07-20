@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation
+﻿// Copyright (c) Microsoft Corporation
 // The Microsoft Corporation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
@@ -7,10 +7,12 @@ using Microsoft.CommandPalette.Extensions.Toolkit;
 using Microsoft.UI.Xaml.Media;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Threading.Tasks;
 using System.Web;
 using System.Xml;
 using System.Xml.Linq;
@@ -37,14 +39,20 @@ public class Suggestion
 {
 
     [XmlAttribute(AttributeName = "data")]
-    public string Data { get; set; }
+    public required string Data { get; set; }
 }
 
 internal sealed partial class GooglePalPage : DynamicListPage
 {
+    // suggestions
+    public List<string> Suggestions = [];
 
-    // required for getting user input
-    public override void UpdateSearchText(string oldSearch, string newSearch) => RaiseItemsChanged(UIItems);
+    // rate limiting
+    public int RatelimitTimeMS = 300;
+    public int OutOfDateLength = 3;
+
+    // required for getting user input                                             +1 to include actual search query 🢆
+    public override void UpdateSearchText(string oldSearch, string newSearch) => RaiseItemsChanged(Suggestions.Count + 1);
 
     // icon
     private static IconInfo SearchIcon = IconHelpers.FromRelativePath("Assets\\SearchIconFontAwesome.png");
@@ -90,12 +98,12 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Name = "Search";
     }
 
-    public int UIItems;
+    
+    private string previousSearchQuery = "";
 
-    [RequiresUnreferencedCode("Calls GooglePal.GooglePalPage.GetSuggestions(String)")]
     public override IListItem[] GetItems()
     {
-        // show generic text
+        // show generic text if no input available
         if (string.IsNullOrEmpty(SearchText))
         {
             return [
@@ -104,7 +112,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         }
 
         // format suggestions into command palette list items
-        List<ListItem> suggestions = [
+        List<ListItem> queries = [
 
             // always show actual option
             new ListItem(
@@ -114,8 +122,21 @@ internal sealed partial class GooglePalPage : DynamicListPage
             { Title = $"{SearchText}", Subtitle = "Search" }
         ];
 
-        // get suggestions, convert them into list items, then add them to the suggestions
-        GetSuggestions(SearchText)
+
+        // update suggestions if very out of date
+        if (SearchText.Length > previousSearchQuery.Length + OutOfDateLength || SearchText.Length < previousSearchQuery.Length - OutOfDateLength)
+            Task.Run(async () => await UpdateSuggestions(previousSearchText: SearchText, requireNoChangeTimeMS: 0));
+
+        // update suggestions thread
+        else if (SearchText != previousSearchQuery)
+            Task.Run(async() => await UpdateSuggestions(previousSearchText: SearchText, requireNoChangeTimeMS: RatelimitTimeMS));
+
+
+        // update previous
+        //previousSearchQuery = SearchText;
+
+        // convert suggestions into list items and add to the queries list
+        Suggestions
             .ConvertAll(suggestion =>
                 new ListItem(
                     new OpenUrlCommand($"https://www.google.com/search?q={HttpUtility.UrlEncode(suggestion)}") { Name = "Search", Icon = SearchIcon }
@@ -123,11 +144,29 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 )
                 { Title = $"{suggestion}", Subtitle = "Search" }
             )
-            .ForEach(item => suggestions.Add(item));
-
-        UIItems = suggestions.Count;
+            .ForEach(item => queries.Add(item));
 
         // show search options
-        return suggestions.ToArray();
+        return queries.ToArray();
+    }
+
+    [RequiresUnreferencedCode("Calls GooglePal.GooglePalPage.GetSuggestions(String)")]
+    public async Task UpdateSuggestions(string previousSearchText, int requireNoChangeTimeMS)
+    {
+        await Task.Delay(requireNoChangeTimeMS);
+
+        // don't update suggestions if user has typed more
+        if (SearchText != previousSearchText) return;
+        if (SearchText == previousSearchQuery) return;
+
+        previousSearchQuery = SearchText;
+
+        Debug.WriteLine("Updating suggestions");
+
+        // update suggestions
+        Suggestions = GetSuggestions(SearchText);
+
+        // update UI
+        RaiseItemsChanged(Suggestions.Count + 1);
     }
 }
