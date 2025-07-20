@@ -4,43 +4,22 @@
 
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
-using Microsoft.UI.Xaml.Media;
-using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Web;
-using System.Xml;
 using System.Xml.Linq;
-using System.Xml.Serialization;
-using Windows.Data.Xml.Dom;
+using Windows.System;
+using Windows.System.Profile;
+using static GooglePal.Chrome;
 
 namespace GooglePal;
 
 
-// suggestions
-// Google suggestions API XML parsing
-
-[XmlRoot(ElementName = "toplevel")]
-public class SuggestionsAPIResult
-{
-    [XmlElement(ElementName = "CompleteSuggestion")]
-    public List<Suggestion> CompleteSuggestion { get; set; }
-
-}
-
-
-[XmlRoot(ElementName = "suggestion")]
-public class Suggestion
-{
-
-    [XmlAttribute(AttributeName = "data")]
-    public required string Data { get; set; }
-}
 
 internal sealed partial class GooglePalPage : DynamicListPage
 {
@@ -51,15 +30,39 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public int RatelimitTimeMS = 300;
     public int OutOfDateLength = 3;
 
+    private string previousSearchQuery = "";
+
+
+    // chrome profile
+    public List<Chrome.Profile> Profiles = Chrome.GetChromeProfiles();
+    public string DefaultProfile;
+
     // required for getting user input                                             +1 to include actual search query 🢆
-    public override void UpdateSearchText(string oldSearch, string newSearch) => RaiseItemsChanged(Suggestions.Count + 1);
+    public override void UpdateSearchText(string oldSearch, string newSearch)
+    {
+        RaiseItemsChanged(Suggestions.Count + 1);
+
+        // update suggestions if very out of date
+        if (SearchText.Length > previousSearchQuery.Length + OutOfDateLength || SearchText.Length < previousSearchQuery.Length - OutOfDateLength)
+            Task.Run(async () => await UpdateSuggestions(
+                previousSearchText: SearchText,
+                requireNoChangeTimeMS: 0)
+            );
+
+        // update suggestions thread when user stops typing
+        else
+            Task.Run(async () => await UpdateSuggestions(
+                previousSearchText: SearchText,
+                requireNoChangeTimeMS: RatelimitTimeMS)
+            );
+
+    }
 
     // icon
-    private static IconInfo SearchIcon = IconHelpers.FromRelativePath("Assets\\SearchIconFontAwesome.png");
+    private static IconInfo SearchIcon = new IconInfo("\uE721");
 
 
     // get search suggestions as a string array
-
     [RequiresUnreferencedCode("Calls System.Xml.Serialization.XmlSerializer.XmlSerializer(Type)")]
     public static List<string> GetSuggestions(string query)
     {
@@ -96,10 +99,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         Title = "Search Google";
         Name = "Search";
-    }
 
-    
-    private string previousSearchQuery = "";
+        DefaultProfile = Profiles.FirstOrDefault()?.Name ?? "";
+    }
 
     public override IListItem[] GetItems()
     {
@@ -111,43 +113,96 @@ internal sealed partial class GooglePalPage : DynamicListPage
             ];
         }
 
+        // Create context menu commands for each Chrome profile
+        var moreCommands = Profiles.Select(profile =>
+            new AnonymousCommand(() => Chrome.OpenUrlInChromeProfile(
+                url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(SearchText)}",
+                profileName: profile.Name
+            ))
+            {
+                Name = $"Search as: {profile.Name}",
+                Icon = SearchIcon
+            } as ICommand
+        ).ToArray();
+
+
         // format suggestions into command palette list items
         List<ListItem> queries = [
 
-            // always show actual option
-            new ListItem(
-                new OpenUrlCommand($"https://www.google.com/search?q={HttpUtility.UrlEncode(SearchText)}") { Name = "Search", Icon = SearchIcon }
-
-            )
-            { Title = $"{SearchText}", Subtitle = "Search" }
+            // always show raw search text option
+            CreateSearchListItem(SearchText)
         ];
 
 
-        // update suggestions if very out of date
-        if (SearchText.Length > previousSearchQuery.Length + OutOfDateLength || SearchText.Length < previousSearchQuery.Length - OutOfDateLength)
-            Task.Run(async () => await UpdateSuggestions(previousSearchText: SearchText, requireNoChangeTimeMS: 0));
-
-        // update suggestions thread
-        else if (SearchText != previousSearchQuery)
-            Task.Run(async() => await UpdateSuggestions(previousSearchText: SearchText, requireNoChangeTimeMS: RatelimitTimeMS));
-
-
-        // update previous
-        //previousSearchQuery = SearchText;
-
         // convert suggestions into list items and add to the queries list
-        Suggestions
-            .ConvertAll(suggestion =>
-                new ListItem(
-                    new OpenUrlCommand($"https://www.google.com/search?q={HttpUtility.UrlEncode(suggestion)}") { Name = "Search", Icon = SearchIcon }
-
-                )
-                { Title = $"{suggestion}", Subtitle = "Search" }
-            )
-            .ForEach(item => queries.Add(item));
+        queries.AddRange(Suggestions.Select(CreateSearchListItem));
 
         // show search options
         return queries.ToArray();
+    }
+
+    private ListItem CreateSearchListItem(string query)
+    {
+        // Create context menu items for each Chrome profile
+        var moreCommands = Profiles.Select(profile =>
+            new CommandContextItem(
+                name: $"Search as: {profile.Name}",
+                title: $"Search as: {profile.Name}",
+                action: () => {
+
+                    // change default
+                    DefaultProfile = profile.Name;
+
+                    // move the default profile to the top
+                    Profiles = Profiles
+                        .OrderByDescending(_profile => _profile.Name == DefaultProfile)
+                        .ToList();
+
+                    Chrome.OpenUrlInChromeProfile(
+                        url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
+                        profileName: profile.Name
+                    );
+                }
+            )
+            { RequestedShortcut = KeyChordHelpers.FromModifiers(
+                    ctrl: true,
+                    vkey: (int)VirtualKey.Number1 + Profiles.IndexOf(profile)
+                )
+            }
+        ).ToArray();
+
+        // add Open Google button
+        moreCommands = moreCommands.Prepend(
+            new CommandContextItem(
+                name: $"Open Google (as {DefaultProfile})",
+                title: "Open Google",
+                action: () =>
+                {
+                    Chrome.OpenUrlInChromeProfile(
+                        url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
+                        profileName: DefaultProfile
+                    );
+                }
+            )
+            {
+                RequestedShortcut = KeyChordHelpers.FromModifiers(
+                    ctrl: true,
+                    vkey: (int)VirtualKey.Enter
+                )
+            }
+        ).ToArray();
+
+        // Create the main list item
+        var listItem = new ListItem(
+                new AnonymousCommand(() => Chrome.OpenUrlInChromeProfile(
+                    url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
+                    profileName: DefaultProfile)
+                )
+                { Name = "Search", Icon = SearchIcon }
+
+        ) { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
+
+        return listItem;
     }
 
     [RequiresUnreferencedCode("Calls GooglePal.GooglePalPage.GetSuggestions(String)")]
@@ -157,7 +212,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         // don't update suggestions if user has typed more
         if (SearchText != previousSearchText) return;
-        if (SearchText == previousSearchQuery) return;
 
         previousSearchQuery = SearchText;
 
