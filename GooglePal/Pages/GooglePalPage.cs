@@ -46,6 +46,17 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public List<Chrome.Profile> Profiles;
     public string DefaultProfile;
 
+    // history
+    public string HistoryConfigPath = Path.Combine(
+        Path.GetDirectoryName(System.AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
+        "history.json"
+    );
+    public int HistoryLength = 20;
+
+    public int LevenshteinMaxDistance = 10;
+
+    public List<string> History;
+
     // update UI when search bar changes
     public override void UpdateSearchText(string oldSearch, string newSearch)
     {
@@ -73,6 +84,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
     // icon
     private static IconInfo SearchIcon = new IconInfo("\uE721");
     private static IconInfo VisitIcon = new IconInfo("\uE774");
+    private static IconInfo HistoryIcon = new IconInfo("\uE81C");
 
 
     // get search suggestions as a string array
@@ -117,6 +129,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Profiles = Chrome.LoadProfiles(ProfileConfigPath);
 
         DefaultProfile = Profiles.FirstOrDefault()?.Name ?? "Last opened";
+
+        // load history
+        History = Chrome.LoadHistory(HistoryConfigPath, HistoryLength);
     }
 
     public override IListItem[] GetItems()
@@ -138,7 +153,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
 
         // convert suggestions into list items and add to the queries list
-        queries.AddRange(Suggestions.Select(CreateSearchListItem));
+        queries.AddRange(Suggestions.Select(CreateSearchListItem).Where(suggestion => suggestion.Title.Trim() != SearchText.Trim()));
 
         // show search options
         return queries.ToArray();
@@ -146,11 +161,13 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     private ListItem CreateSearchListItem(string query)
     {
+        bool isURL = IsValidDomainName(query);
+
         // Create context menu items for each Chrome profile
         var moreCommands = Profiles.Select(profile =>
             new CommandContextItem(
-                name: $"Search ({profile.Name})",
-                title: $"Search as: {profile.Name}",
+                name: isURL ? $"Visit ({profile.Name})" : $"Search ({profile.Name})",
+                title: isURL ? $"Visit as: {profile.Name}" : $"Search as: {profile.Name}",
                 action: () => {
 
                     // change default
@@ -161,10 +178,21 @@ internal sealed partial class GooglePalPage : DynamicListPage
                         .OrderByDescending(_profile => _profile.Name == DefaultProfile)
                         .ToList();
 
+                    // add to history
+                    History.Add(query);
+
+                    // remove first if out of range
+                    if (History.Count > HistoryLength)
+                        History = History.Skip(History.Count - HistoryLength).ToList();
+
+
                     Chrome.OpenUrlInChromeProfile(
-                        url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
+                        url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
                         profileName: profile.Name
                     );
+
+                    // save history
+                    Chrome.SaveHistory(History, HistoryConfigPath);
 
                     // save profiles
                     Chrome.SaveProfiles(Profiles, ProfileConfigPath);
@@ -188,33 +216,33 @@ internal sealed partial class GooglePalPage : DynamicListPage
                     vkey: (int)VirtualKey.Enter
             );
 
-        ListItem listItem;
+        ListItem listItem = new ListItem(
+                new AnonymousCommand(() => {
 
-        // Create the main list item
-        if (IsValidDomainName(query))
-        {
-            // if url is valid,
-            listItem = new ListItem(
-                new AnonymousCommand(() => Chrome.OpenUrlInChrome(
-                    url: query
-                ))
-                { Name = $"Visit ({DefaultProfile})", Icon = VisitIcon }
+                    // add to history
+                    History.Add(query);
+
+                    // remove first if out of range
+                    if (History.Count > HistoryLength)
+                        History = History.Skip(History.Count - HistoryLength).ToList();
+
+
+                    Chrome.OpenUrlInChrome(
+                        url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}"
+                    );
+
+                    // save history
+                    Chrome.SaveHistory(History, HistoryConfigPath);
+
+                })
+                {
+                    Name = isURL ? $"Visit ({DefaultProfile})" : $"Search ({DefaultProfile})",
+                    Icon = History.Contains(query) ? HistoryIcon : ( isURL ? VisitIcon : SearchIcon )
+                }
+
             )
-            { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
+        { Title = $"{query}", Subtitle = isURL ? $"Visit as: {DefaultProfile}" : $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
 
-        }
-        else
-        {
-            listItem = new ListItem(
-                new AnonymousCommand(() => Chrome.OpenUrlInChrome(
-                    url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}"
-                ))
-                { Name = $"Search ({DefaultProfile})", Icon = SearchIcon }
-
-            )
-            { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
-
-        }
 
         return listItem;
     }
@@ -278,10 +306,94 @@ internal sealed partial class GooglePalPage : DynamicListPage
         return listItem;
     }
 
+
+    [RequiresUnreferencedCode("Calls GooglePal.GooglePalPage.GetSuggestions(String)")]
+    public async Task UpdateSuggestions(string previousSearchText, int requireNoChangeTimeMS)
+    {
+        await Task.Delay(requireNoChangeTimeMS);
+
+        // don't update suggestions if user has typed more
+        if (SearchText.Trim() != previousSearchText) return;
+
+        previousSearchQuery = SearchText.Trim();
+
+        Debug.WriteLine("Updating suggestions");
+
+        // update suggestions (not including values that are the search text)
+        Suggestions = GetSuggestions(SearchText.Trim())
+            .Where(suggestion => suggestion.Trim() != SearchText.Trim())
+            .ToList();
+
+        // add history
+        Suggestions.InsertRange(
+            index: 0,
+            // add items that are aren't currently in suggestions
+            collection: History.Where(item =>
+                ComputeDistanceLevenshtein(SearchText, item) <= LevenshteinMaxDistance &&
+                !Suggestions.Contains(item)
+            )
+        );
+
+        History.ForEach(item => Debug.WriteLine(ComputeDistanceLevenshtein(SearchText, item)));
+
+        // update UI
+        RaiseItemsChanged(Suggestions.Count + 1);
+    }
+
+    bool IsInHistory(string query)
+    {
+        return History.Where(item => ComputeDistanceLevenshtein(SearchText, item) <= LevenshteinMaxDistance).Any();
+    }
+
+
+    // https://www.dotnetperls.com/levenshtein
+    static int ComputeDistanceLevenshtein(string s, string t)
+    {
+        int n = s.Length;
+        int m = t.Length;
+        int[,] d = new int[n + 1, m + 1];
+
+        // Verify arguments.
+        if (n == 0)
+        {
+            return m;
+        }
+
+        if (m == 0)
+        {
+            return n;
+        }
+
+        // Initialize arrays.
+        for (int i = 0; i <= n; d[i, 0] = i++)
+        {
+        }
+
+        for (int j = 0; j <= m; d[0, j] = j++)
+        {
+        }
+
+        // Begin looping.
+        for (int i = 1; i <= n; i++)
+        {
+            for (int j = 1; j <= m; j++)
+            {
+                // Compute cost.
+                int cost = (t[j - 1] == s[i - 1]) ? 0 : 1;
+                d[i, j] = Math.Min(
+                Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
+                d[i - 1, j - 1] + cost);
+            }
+        }
+        // Return cost.
+        return d[n, m];
+    }
+
+
     // [https://www.aspsnippets.com/questions/186559/Check-Domain-Name-Exist-or-not-using-C-and-VBNet-in-ASPNet/]
     public static bool IsValidDomainName(string domainName)
     {
-        if (string.IsNullOrWhiteSpace(domainName) ) return false;
+        if (string.IsNullOrWhiteSpace(domainName)) return false;
         if (domainName.Contains(' ')) return false;
         if (!domainName.Contains('.')) return false;
 
@@ -314,25 +426,5 @@ internal sealed partial class GooglePalPage : DynamicListPage
         return isDomainExist;
     }
 
-    [RequiresUnreferencedCode("Calls GooglePal.GooglePalPage.GetSuggestions(String)")]
-    public async Task UpdateSuggestions(string previousSearchText, int requireNoChangeTimeMS)
-    {
-        await Task.Delay(requireNoChangeTimeMS);
 
-        // don't update suggestions if user has typed more
-        if (SearchText.Trim() != previousSearchText) return;
-
-        previousSearchQuery = SearchText.Trim();
-
-        Debug.WriteLine("Updating suggestions");
-
-        // update suggestions (not including values that are the search text)
-        Suggestions = GetSuggestions(SearchText.Trim())
-            .Select(suggestion => suggestion.Trim())
-            .Where(suggestion => suggestion != SearchText.Trim())
-            .ToList();
-
-        // update UI
-        RaiseItemsChanged(Suggestions.Count + 1);
-    }
 }

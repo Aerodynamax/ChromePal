@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Windows.System.Profile;
+using static GooglePal.Chrome;
 
 namespace GooglePal
 {
@@ -139,7 +141,7 @@ namespace GooglePal
 
                 string jsonString = File.ReadAllText(filePath);
 
-                List<Profile> profiles = JsonSerializer.Deserialize<List<Profile>>(jsonString) ?? [];                
+                List<Profile> profiles = JsonSerializer.Deserialize<List<Profile>>(jsonString) ?? [];
 
                 // add any missing profiles
                 profiles.AddRange(
@@ -160,5 +162,52 @@ namespace GooglePal
                 return allProfiles;
             }
         }
+
+
+        public static void SaveHistory(List<string> history, string filePath)
+        {
+            JsonSerializerOptions JSONOptions = new JsonSerializerOptions { WriteIndented = true };
+
+            string jsonString = JsonSerializer.Serialize(history, JSONOptions);
+
+            Debug.WriteLine($"Saving to: {filePath}");
+
+            File.WriteAllText(filePath, jsonString);
+        }
+
+        public static List<string> LoadHistory(string filePath, int maxLength)
+        {
+            try
+            {
+                Debug.WriteLine($"Loading history from: {filePath}");
+
+                string jsonString = File.ReadAllText(filePath);
+
+                List<string> history = JsonSerializer.Deserialize<List<string>>(jsonString) ?? [];
+
+                // remove duplicates
+
+                history = history.Distinct().ToList();
+
+                // remove first if out of range
+                if (history.Count > maxLength)
+                    history = history.Skip(history.Count - maxLength).ToList();
+
+                
+                history.ForEach(t => Debug.WriteLine(t));
+
+                // return profiles
+                return history;
+
+            }
+            catch (FileNotFoundException ex)
+            {
+                Debug.WriteLine($"Failed to load history: {ex}");
+                // return none if none exist
+                return [];
+            }
+        }
+
+
     }
 }
