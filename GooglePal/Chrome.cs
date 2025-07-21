@@ -117,5 +117,48 @@ namespace GooglePal
 
             Process.Start(startInfo);
         }
+
+        // https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/how-to
+        public static void SaveProfiles(List<Profile> profiles, string filePath)
+        {
+            JsonSerializerOptions JSONOptions = new JsonSerializerOptions { WriteIndented = true };
+
+            string jsonString = JsonSerializer.Serialize(profiles, JSONOptions);
+
+            Debug.WriteLine($"Saving to: {filePath}");
+
+            File.WriteAllText(filePath, jsonString);
+        }
+
+        public static List<Profile> LoadProfiles(string filePath)
+        {
+            var allProfiles = GetChromeProfiles();
+            try
+            {
+                Debug.WriteLine($"Loading profiles from: {filePath}");
+
+                string jsonString = File.ReadAllText(filePath);
+
+                List<Profile> profiles = JsonSerializer.Deserialize<List<Profile>>(jsonString) ?? [];                
+
+                // add any missing profiles
+                profiles.AddRange(
+                    allProfiles.Where(profile => 
+                        !profiles.Select(knownProfile => knownProfile.Name)
+                                 .Contains(profile.Name)
+                    )
+                );
+
+                // return profiles
+                return profiles;
+
+
+            } catch (FileNotFoundException ex)
+            {
+                Debug.WriteLine($"Failed to load profiles: {ex}");
+                // return defaults if none exist
+                return allProfiles;
+            }
+        }
     }
 }

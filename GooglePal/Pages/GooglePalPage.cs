@@ -9,8 +9,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
@@ -36,8 +38,13 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
 
     // chrome profile
-    public List<Chrome.Profile> Profiles = Chrome.GetChromeProfiles();
-    public string DefaultProfile = "Last opened";
+    public string ProfileConfigPath = Path.Combine(
+        Path.GetDirectoryName(System.AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
+        "profiles.json"
+    );
+
+    public List<Chrome.Profile> Profiles;
+    public string DefaultProfile;
 
     // update UI when search bar changes
     public override void UpdateSearchText(string oldSearch, string newSearch)
@@ -45,7 +52,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         RaiseItemsChanged(Suggestions.Count + 1);
 
         // don't query if empty
-        if (string.IsNullOrEmpty(SearchText)) return;
+        if (string.IsNullOrEmpty(SearchText.Trim())) return;
 
         // update suggestions if very out of date
         if (SearchText.Length > previousSearchQuery.Length + OutOfDateLength || SearchText.Length < previousSearchQuery.Length - OutOfDateLength)
@@ -105,15 +112,20 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         Title = "Search Google";
         Name = "Search";
+
+        // load profiles
+        Profiles = Chrome.LoadProfiles(ProfileConfigPath);
+
+        DefaultProfile = Profiles.FirstOrDefault()?.Name ?? "Last opened";
     }
 
     public override IListItem[] GetItems()
     {
         // show generic text if no input available
-        if (string.IsNullOrEmpty(SearchText))
+        if (string.IsNullOrEmpty(SearchText.Trim()))
         {
             return [
-                new ListItem(new NoOpCommand()) { Title = "Start typing ..." },
+                CreateDefaultSearchListItem()
             ];
         }
 
@@ -137,7 +149,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // Create context menu items for each Chrome profile
         var moreCommands = Profiles.Select(profile =>
             new CommandContextItem(
-                name: $"Search as: {profile.Name}",
+                name: $"Search ({profile.Name})",
                 title: $"Search as: {profile.Name}",
                 action: () => {
 
@@ -153,6 +165,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
                         url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
                         profileName: profile.Name
                     );
+
+                    // save profiles
+                    Chrome.SaveProfiles(Profiles, ProfileConfigPath);
                 }
             )
             {
@@ -163,25 +178,15 @@ internal sealed partial class GooglePalPage : DynamicListPage
             }
         ).ToArray();
 
-        // add Open Google button
-        moreCommands = moreCommands.Prepend(
-            new CommandContextItem(
-                name: $"Open Google",
-                title: "Open Google",
-                action: () =>
-                {
-                    Chrome.OpenUrlInChrome(
-                        url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}"
-                    );
-                }
-            )
-            {
-                RequestedShortcut = KeyChordHelpers.FromModifiers(
+        // remove first
+        if (moreCommands.Length > 0) moreCommands = moreCommands.Skip( 1 ).ToArray();
+
+        // make second profile ctrl+enter
+        if (moreCommands.Length > 0)
+            moreCommands[0].RequestedShortcut = KeyChordHelpers.FromModifiers(
                     ctrl: true,
                     vkey: (int)VirtualKey.Enter
-                )
-            }
-        ).ToArray();
+            );
 
         ListItem listItem;
 
@@ -193,7 +198,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 new AnonymousCommand(() => Chrome.OpenUrlInChrome(
                     url: query
                 ))
-                { Name = "Visit", Icon = VisitIcon }
+                { Name = $"Visit ({DefaultProfile})", Icon = VisitIcon }
             )
             { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
 
@@ -204,12 +209,71 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 new AnonymousCommand(() => Chrome.OpenUrlInChrome(
                     url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}"
                 ))
-                { Name = "Search", Icon = SearchIcon }
+                { Name = $"Search ({DefaultProfile})", Icon = SearchIcon }
 
             )
             { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
 
         }
+
+        return listItem;
+    }
+
+    private ListItem CreateDefaultSearchListItem()
+    {
+        // Create context menu items for each Chrome profile
+        var moreCommands = Profiles.Select(profile =>
+            new CommandContextItem(
+                name: $"Open Chrome ({profile.Name})",
+                title: $"Open Chrome as: {profile.Name}",
+                action: () => {
+
+                    // change default
+                    DefaultProfile = profile.Name;
+
+                    // move the default profile to the top
+                    Profiles = Profiles
+                        .OrderByDescending(_profile => _profile.Name == DefaultProfile)
+                        .ToList();
+
+                    Chrome.OpenUrlInChromeProfile(
+                        url: "chrome://newtab",
+                        profileName: profile.Name
+                    );
+
+                    // save profiles
+                    Chrome.SaveProfiles(Profiles, ProfileConfigPath);
+                }
+            )
+            {
+                RequestedShortcut = KeyChordHelpers.FromModifiers(
+                    ctrl: true,
+                    vkey: (int)VirtualKey.Number1 + Profiles.IndexOf(profile)
+                )
+            }
+        ).ToArray();
+
+        // remove first
+        if (moreCommands.Length > 0) moreCommands = moreCommands.Skip(1).ToArray();
+
+        // make second profile ctrl+enter
+        if (moreCommands.Length > 0)
+            moreCommands[0].RequestedShortcut = KeyChordHelpers.FromModifiers(
+                    ctrl: true,
+                    vkey: (int)VirtualKey.Enter
+            );
+
+        // Create the main list item
+
+        ListItem listItem = new ListItem(
+            new AnonymousCommand(() => Chrome.OpenUrlInChrome(
+                url: "chrome://newtab"
+            ))
+            { Name = $"Open Chrome ({DefaultProfile})", Icon = SearchIcon }
+
+        )
+        { Title = "Search Google or type a URL", Subtitle = $"Open as: {DefaultProfile}", MoreCommands = moreCommands };
+
 
         return listItem;
     }
