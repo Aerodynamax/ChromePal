@@ -2,6 +2,7 @@
 // The Microsoft Corporation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 
@@ -10,13 +11,24 @@ namespace GooglePal;
 public partial class GooglePalCommandsProvider : CommandProvider
 {
     private readonly ICommandItem[] _commands;
+    private readonly SettingsManager _settingsManager = new();
+
+    private GooglePalPage searchPage = new GooglePalPage();
 
     public GooglePalCommandsProvider()
     {
+        // [https://github.com/jiripolasek/ColorsExtension/blob/master/src/JPSoftworks.ColorsExtension/ColorsExtensionCommandsProvider.cs]
+        Settings = _settingsManager.Settings;
+
+        // attach to setting changes
+        _settingsManager.OnSettingsSaved += searchPage.OnSettingsChanged;
+        // fire event without changing settings
+        _settingsManager.SendSavedUpdateEvent();
+
         DisplayName = "Search Google";
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         _commands = [
-            new CommandItem(new GooglePalPage()),
+            new CommandItem(searchPage),
         ];
     }
 

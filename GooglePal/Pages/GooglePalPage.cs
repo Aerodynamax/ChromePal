@@ -2,6 +2,7 @@
 // The Microsoft Corporation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
@@ -51,7 +52,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Path.GetDirectoryName(System.AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
         "history.json"
     );
-    public int HistoryLength = 20;
+    public int HistoryLength = 999;
 
     public int LevenshteinMaxDistance = 10;
 
@@ -339,6 +340,22 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // update UI
         RaiseItemsChanged(Suggestions.Count + 1);
     }
+
+
+    public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
+    {
+        HistoryLength = eventArgs.HistoryLength;
+
+        Debug.WriteLine($"History updated: {eventArgs.HistoryLength}");
+
+        // truncate history if required
+        if (History.Count > HistoryLength)
+            History = History.Skip(History.Count - HistoryLength).ToList();
+
+        // save
+        Chrome.SaveHistory(History, HistoryConfigPath);
+    }
+
 
     bool IsInHistory(string query)
     {
