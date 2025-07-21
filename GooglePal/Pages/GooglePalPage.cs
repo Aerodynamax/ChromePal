@@ -4,12 +4,14 @@
 
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
 using System.Xml.Linq;
@@ -35,24 +37,27 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     // chrome profile
     public List<Chrome.Profile> Profiles = Chrome.GetChromeProfiles();
-    public string DefaultProfile;
+    public string DefaultProfile = "Last opened";
 
-    // required for getting user input                                             +1 to include actual search query 🢆
+    // update UI when search bar changes
     public override void UpdateSearchText(string oldSearch, string newSearch)
     {
         RaiseItemsChanged(Suggestions.Count + 1);
 
+        // don't query if empty
+        if (string.IsNullOrEmpty(SearchText)) return;
+
         // update suggestions if very out of date
         if (SearchText.Length > previousSearchQuery.Length + OutOfDateLength || SearchText.Length < previousSearchQuery.Length - OutOfDateLength)
             Task.Run(async () => await UpdateSuggestions(
-                previousSearchText: SearchText,
+                previousSearchText: SearchText.Trim(),
                 requireNoChangeTimeMS: 0)
             );
 
         // update suggestions thread when user stops typing
         else
             Task.Run(async () => await UpdateSuggestions(
-                previousSearchText: SearchText,
+                previousSearchText: SearchText.Trim(),
                 requireNoChangeTimeMS: RatelimitTimeMS)
             );
 
@@ -60,6 +65,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     // icon
     private static IconInfo SearchIcon = new IconInfo("\uE721");
+    private static IconInfo VisitIcon = new IconInfo("\uE774");
 
 
     // get search suggestions as a string array
@@ -99,8 +105,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         Title = "Search Google";
         Name = "Search";
-
-        DefaultProfile = Profiles.FirstOrDefault()?.Name ?? "";
     }
 
     public override IListItem[] GetItems()
@@ -112,19 +116,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 new ListItem(new NoOpCommand()) { Title = "Start typing ..." },
             ];
         }
-
-        // Create context menu commands for each Chrome profile
-        var moreCommands = Profiles.Select(profile =>
-            new AnonymousCommand(() => Chrome.OpenUrlInChromeProfile(
-                url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(SearchText)}",
-                profileName: profile.Name
-            ))
-            {
-                Name = $"Search as: {profile.Name}",
-                Icon = SearchIcon
-            } as ICommand
-        ).ToArray();
-
 
         // format suggestions into command palette list items
         List<ListItem> queries = [
@@ -164,7 +155,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
                     );
                 }
             )
-            { RequestedShortcut = KeyChordHelpers.FromModifiers(
+            {
+                RequestedShortcut = KeyChordHelpers.FromModifiers(
                     ctrl: true,
                     vkey: (int)VirtualKey.Number1 + Profiles.IndexOf(profile)
                 )
@@ -174,13 +166,12 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // add Open Google button
         moreCommands = moreCommands.Prepend(
             new CommandContextItem(
-                name: $"Open Google (as {DefaultProfile})",
+                name: $"Open Google",
                 title: "Open Google",
                 action: () =>
                 {
-                    Chrome.OpenUrlInChromeProfile(
-                        url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
-                        profileName: DefaultProfile
+                    Chrome.OpenUrlInChrome(
+                        url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}"
                     );
                 }
             )
@@ -192,17 +183,71 @@ internal sealed partial class GooglePalPage : DynamicListPage
             }
         ).ToArray();
 
+        ListItem listItem;
+
         // Create the main list item
-        var listItem = new ListItem(
-                new AnonymousCommand(() => Chrome.OpenUrlInChromeProfile(
-                    url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
-                    profileName: DefaultProfile)
-                )
+        if (IsValidDomainName(query))
+        {
+            // if url is valid,
+            listItem = new ListItem(
+                new AnonymousCommand(() => Chrome.OpenUrlInChrome(
+                    url: query
+                ))
+                { Name = "Visit", Icon = VisitIcon }
+            )
+            { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
+
+        }
+        else
+        {
+            listItem = new ListItem(
+                new AnonymousCommand(() => Chrome.OpenUrlInChrome(
+                    url: $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}"
+                ))
                 { Name = "Search", Icon = SearchIcon }
 
-        ) { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
+            )
+            { Title = $"{query}", Subtitle = $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
+
+        }
 
         return listItem;
+    }
+
+    // [https://www.aspsnippets.com/questions/186559/Check-Domain-Name-Exist-or-not-using-C-and-VBNet-in-ASPNet/]
+    public static bool IsValidDomainName(string domainName)
+    {
+        if (string.IsNullOrWhiteSpace(domainName) ) return false;
+        if (domainName.Contains(' ')) return false;
+        if (!domainName.Contains('.')) return false;
+
+        if (Uri.IsWellFormedUriString(domainName, UriKind.RelativeOrAbsolute) == false) return false;
+        if (Uri.CheckHostName(domainName) == UriHostNameType.Unknown) return false;
+
+        // [https://stackoverflow.com/a/26987741]
+        if (!Regex.IsMatch(domainName, "^(((?!-))(xn--|_)?[a-z0-9-]{0,61}[a-z0-9]{1,1}\\.)*(xn--)?([a-z0-9][a-z0-9\\-]{0,60}|[a-z0-9-]{1,30}\\.[a-z]{2,})$")) return false;
+
+        Debug.WriteLine($"Checking if domain: {domainName}");
+
+        bool isDomainExist = false;
+        System.Net.IPHostEntry host;
+        try
+        {
+            host = System.Net.Dns.GetHostEntry(domainName);
+            if (host != null)
+            {
+                isDomainExist = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ex.Message == "No such host is known")
+            {
+                isDomainExist = false;
+            }
+        }
+
+        return isDomainExist;
     }
 
     [RequiresUnreferencedCode("Calls GooglePal.GooglePalPage.GetSuggestions(String)")]
@@ -211,14 +256,17 @@ internal sealed partial class GooglePalPage : DynamicListPage
         await Task.Delay(requireNoChangeTimeMS);
 
         // don't update suggestions if user has typed more
-        if (SearchText != previousSearchText) return;
+        if (SearchText.Trim() != previousSearchText) return;
 
-        previousSearchQuery = SearchText;
+        previousSearchQuery = SearchText.Trim();
 
         Debug.WriteLine("Updating suggestions");
 
-        // update suggestions
-        Suggestions = GetSuggestions(SearchText);
+        // update suggestions (not including values that are the search text)
+        Suggestions = GetSuggestions(SearchText.Trim())
+            .Select(suggestion => suggestion.Trim())
+            .Where(suggestion => suggestion != SearchText.Trim())
+            .ToList();
 
         // update UI
         RaiseItemsChanged(Suggestions.Count + 1);

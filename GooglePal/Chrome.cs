@@ -95,5 +95,27 @@ namespace GooglePal
 
             Process.Start(startInfo);
         }
+
+        /// <summary>
+        /// Opens a URL in a Chrome profile specified by its display name.
+        /// </summary>
+        /// <param name="profileName">The display name of the profile.</param>
+        /// <param name="url">The URL to open.</param>
+        public static void OpenUrlInChrome(string url)
+        {
+            string chromeExe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+
+            if (!File.Exists(chromeExe)) return;
+
+            // start chrome [ https://stackoverflow.com/a/70151095 ]
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = chromeExe,
+                Arguments = $"\"{url}\"",
+                UseShellExecute = false
+            };
+
+            Process.Start(startInfo);
+        }
     }
 }
