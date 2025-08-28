@@ -10,15 +10,13 @@ namespace GooglePal.Pages;
 
 public class SettingsChangedEventArgs : EventArgs
 {
+    public bool OpenInNewBrowser { get; }
     public int HistoryLength { get; }
 
-    public SettingsChangedEventArgs(SettingsManager.HistoryLengths historyLength)
+    public SettingsChangedEventArgs(bool openInNewBrowser, int historyLength)
     {
-        if (historyLength == SettingsManager.HistoryLengths.None) HistoryLength = 0;
-        if (historyLength == SettingsManager.HistoryLengths.Five) HistoryLength = 5;
-        if (historyLength == SettingsManager.HistoryLengths.Ten) HistoryLength = 10;
-        if (historyLength == SettingsManager.HistoryLengths.TwentyFive) HistoryLength = 25;
-        if (historyLength == SettingsManager.HistoryLengths.Fifty) HistoryLength = 50;
+        OpenInNewBrowser = openInNewBrowser;
+        HistoryLength = historyLength;
     }
 }
 
@@ -32,39 +30,73 @@ public class SettingsManager : JsonSettingsManager
 
     private static string Namespaced(string propertyName) => $"{_namespace}.{propertyName}";
 
-    public enum HistoryLengths
-    {
-        None,
-        Five,
-        Ten,
-        TwentyFive,
-        Fifty
-    }
+    private readonly ToggleSetting _OpenInNewBrowser = new(
+        key: nameof(OpenInNewBrowser),
+        label: "Open in new browser",
+        description: "Open queries in new browser.",
+        defaultValue: false
+    );
+    public bool OpenInNewBrowser => _OpenInNewBrowser.Value;
 
-    private static readonly List<ChoiceSetSetting.Choice> _historyLengthChoices =
-    [
-        new ChoiceSetSetting.Choice("None", nameof(HistoryLengths.None)),
-        new ChoiceSetSetting.Choice("5", nameof(HistoryLengths.Five)),
-        new ChoiceSetSetting.Choice("10", nameof(HistoryLengths.Ten)),
-        new ChoiceSetSetting.Choice("25", nameof(HistoryLengths.TwentyFive)),
-        new ChoiceSetSetting.Choice("50", nameof(HistoryLengths.Fifty)),
-    ];
 
-    private readonly ChoiceSetSetting _historyLength = new(
-        Namespaced(nameof(HistoryLength)),
-        "History Length",
-        "Configure the seach history length.",
-        _historyLengthChoices);
+    private readonly ToggleSetting _ProfilesStatic = new(
+        key: nameof(ProfilesStatic),
+        label: "Static profile list",
+        description: "Keep profile list static.",
+        defaultValue: false
+    );
+    public bool ProfilesStatic => _ProfilesStatic.Value;
 
-    public HistoryLengths HistoryLength
+
+    private readonly ChoiceSetSetting _ProfileList = new(
+        key: Namespaced(nameof(ProfileList)),
+        label: "Profile List",
+        description: "Set the list of profiles.",
+        choices: [
+            new ChoiceSetSetting.Choice("None", "0"),
+            new ChoiceSetSetting.Choice("5",    "5"),
+            new ChoiceSetSetting.Choice("10",  "10"),
+            new ChoiceSetSetting.Choice("25",  "25"),
+            new ChoiceSetSetting.Choice("50",  "50"),
+        ]
+    );
+    public int ProfileList
     {
         get
         {
-            if (Enum.TryParse<HistoryLengths>(_historyLength.Value, out var result))
+            if (int.TryParse(_ProfileList.Value, out var result))
             {
                 return result;
             }
-            return HistoryLengths.TwentyFive;
+            // default
+            return 25;
+        }
+    }
+
+
+
+    private readonly ChoiceSetSetting _HistoryLength = new(
+        key: Namespaced(nameof(HistoryLength)),
+        label: "History Length",
+        description: "Set the max seach history length.",
+        choices: [
+            new ChoiceSetSetting.Choice("None", "0"),
+            new ChoiceSetSetting.Choice("5",    "5"),
+            new ChoiceSetSetting.Choice("10",  "10"),
+            new ChoiceSetSetting.Choice("25",  "25"),
+            new ChoiceSetSetting.Choice("50",  "50"),
+        ]
+    );
+    public int HistoryLength
+    {
+        get
+        {
+            if (int.TryParse(_HistoryLength.Value, out var result))
+            {
+                return result;
+            }
+            // default
+            return 25;
         }
     }
 
@@ -73,13 +105,14 @@ public class SettingsManager : JsonSettingsManager
     {
         FilePath = SettingsJsonPath();
 
-        Settings.Add(_historyLength);
+        Settings.Add(_OpenInNewBrowser);
+        Settings.Add(_HistoryLength);
 
         LoadSettings();
 
         Settings.SettingsChanged += (s, a) =>
         {
-            OnSettingsSaved?.Invoke(this, new(HistoryLength));
+            OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength));
             
             SaveSettings();
         };
@@ -96,6 +129,6 @@ public class SettingsManager : JsonSettingsManager
     // send history update (used in initialisation)
     public void SendSavedUpdateEvent()
     {
-        OnSettingsSaved?.Invoke(this, new(HistoryLength));
+        OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength));
     }
 }

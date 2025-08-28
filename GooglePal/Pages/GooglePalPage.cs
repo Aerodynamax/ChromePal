@@ -24,18 +24,26 @@ using static GooglePal.Chrome;
 
 namespace GooglePal;
 
-
+public class CachedItem
+{
+    public required string URL { get; set; }
+    public required bool IsWebsite {  get; set; }
+}
 
 internal sealed partial class GooglePalPage : DynamicListPage
 {
     // suggestions
     public List<string> Suggestions = [];
 
+    public bool typingState = true;
+
     // rate limiting
     public int RatelimitTimeMS = 300;
     public int OutOfDateLength = 3;
 
     private string previousSearchQuery = "";
+
+    public List<CachedItem> CachedIsWebsite = new();
 
 
     // chrome profile
@@ -54,7 +62,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
     );
     public int HistoryLength = 999;
 
-    public int LevenshteinMaxDistance = 10;
+    public int LevenshteinMaxDistance = 3;
 
     public List<string> History;
 
@@ -69,15 +77,15 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // update suggestions if very out of date
         if (SearchText.Length > previousSearchQuery.Length + OutOfDateLength || SearchText.Length < previousSearchQuery.Length - OutOfDateLength)
             Task.Run(async () => await UpdateSuggestions(
-                previousSearchText: SearchText.Trim(),
+                previousSearchText: SearchText,
                 requireNoChangeTimeMS: 0)
             );
 
         // update suggestions thread when user stops typing
         else
             Task.Run(async () => await UpdateSuggestions(
-                previousSearchText: SearchText.Trim(),
-                requireNoChangeTimeMS: RatelimitTimeMS)
+                previousSearchText: SearchText,
+                requireNoChangeTimeMS: 0)
             );
 
     }
@@ -124,7 +132,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
     {
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         Title = "Search Google";
-        Name = "Search";
+        Name = "Search with Chrome";
 
         // load profiles
         Profiles = Chrome.LoadProfiles(ProfileConfigPath);
@@ -203,7 +211,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 RequestedShortcut = KeyChordHelpers.FromModifiers(
                     ctrl: true,
                     vkey: (int)VirtualKey.Number1 + Profiles.IndexOf(profile)
-                )
+                ),
+                Icon = new IconInfo(profile.ProfilePicturePath)
             }
         ).ToArray();
 
@@ -218,30 +227,31 @@ internal sealed partial class GooglePalPage : DynamicListPage
             );
 
         ListItem listItem = new ListItem(
-                new AnonymousCommand(() => {
+            new AnonymousCommand(() => {
 
-                    // add to history
-                    History.Add(query);
+                // add to history
+                History.Add(query);
 
-                    // remove first if out of range
-                    if (History.Count > HistoryLength)
-                        History = History.Skip(History.Count - HistoryLength).ToList();
+                // remove first if out of range
+                if (History.Count > HistoryLength)
+                    History = History.Skip(History.Count - HistoryLength).ToList();
 
 
-                    Chrome.OpenUrlInChrome(
-                        url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}"
-                    );
+                Chrome.OpenUrlInChromeProfile(
+                    url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
+                    profileName: DefaultProfile
+                );
 
-                    // save history
-                    Chrome.SaveHistory(History, HistoryConfigPath);
+                // save history
+                Chrome.SaveHistory(History, HistoryConfigPath);
 
-                })
-                {
-                    Name = isURL ? $"Visit ({DefaultProfile})" : $"Search ({DefaultProfile})",
-                    Icon = History.Contains(query) ? HistoryIcon : ( isURL ? VisitIcon : SearchIcon )
-                }
+            })
+            {
+                Name = isURL ? $"Visit ({DefaultProfile})" : $"Search ({DefaultProfile})",
+                Icon = History.Contains(query) ? HistoryIcon : ( isURL ? VisitIcon : SearchIcon )
+            }
 
-            )
+        )
         { Title = $"{query}", Subtitle = isURL ? $"Visit as: {DefaultProfile}" : $"Search as: {DefaultProfile}", MoreCommands = moreCommands };
 
 
@@ -278,7 +288,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 RequestedShortcut = KeyChordHelpers.FromModifiers(
                     ctrl: true,
                     vkey: (int)VirtualKey.Number1 + Profiles.IndexOf(profile)
-                )
+                ),
+                Icon = new IconInfo(profile.ProfilePicturePath)
             }
         ).ToArray();
 
@@ -295,9 +306,10 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // Create the main list item
 
         ListItem listItem = new ListItem(
-            new AnonymousCommand(() => Chrome.OpenUrlInChrome(
-                url: "chrome://newtab"
-            ))
+            new AnonymousCommand(() => Chrome.OpenUrlInChromeProfile(
+                        url: "chrome://newtab",
+                        profileName: DefaultProfile
+                    ))
             { Name = $"Open Chrome ({DefaultProfile})", Icon = SearchIcon }
 
         )
@@ -314,9 +326,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
         await Task.Delay(requireNoChangeTimeMS);
 
         // don't update suggestions if user has typed more
-        if (SearchText.Trim() != previousSearchText) return;
+        if (SearchText != previousSearchText) return;
 
-        previousSearchQuery = SearchText.Trim();
+        previousSearchQuery = SearchText;
 
         Debug.WriteLine("Updating suggestions");
 
@@ -328,14 +340,15 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // add history
         Suggestions.InsertRange(
             index: 0,
-            // add items that are aren't currently in suggestions
+            // add items that are valid and aren't currently in suggestions
             collection: History.Where(item =>
-                ComputeDistanceLevenshtein(SearchText, item) <= LevenshteinMaxDistance &&
+                (
+                    ComputeDistanceLevenshtein(SearchText, item) <= LevenshteinMaxDistance ||
+                    item.StartsWith(SearchText.Trim(), StringComparison.InvariantCultureIgnoreCase)
+                ) &&
                 !Suggestions.Contains(item)
             )
         );
-
-        History.ForEach(item => Debug.WriteLine(ComputeDistanceLevenshtein(SearchText, item)));
 
         // update UI
         RaiseItemsChanged(Suggestions.Count + 1);
@@ -408,7 +421,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
 
     // [https://www.aspsnippets.com/questions/186559/Check-Domain-Name-Exist-or-not-using-C-and-VBNet-in-ASPNet/]
-    public static bool IsValidDomainName(string domainName)
+    public bool IsValidDomainName(string domainName)
     {
         if (string.IsNullOrWhiteSpace(domainName)) return false;
         if (domainName.Contains(' ')) return false;
@@ -419,6 +432,10 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         // [https://stackoverflow.com/a/26987741]
         if (!Regex.IsMatch(domainName, "^(((?!-))(xn--|_)?[a-z0-9-]{0,61}[a-z0-9]{1,1}\\.)*(xn--)?([a-z0-9][a-z0-9\\-]{0,60}|[a-z0-9-]{1,30}\\.[a-z]{2,})$")) return false;
+
+        // if in cache
+        CachedItem? cachedItem = CachedIsWebsite.Find(item => item.URL.Trim() == domainName.Trim());
+        if (cachedItem != null) return cachedItem.IsWebsite;
 
         Debug.WriteLine($"Checking if domain: {domainName}");
 
@@ -439,6 +456,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 isDomainExist = false;
             }
         }
+
+        CachedIsWebsite.Add(new() { URL = domainName, IsWebsite = isDomainExist });
 
         return isDomainExist;
     }

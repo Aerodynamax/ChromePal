@@ -25,7 +25,7 @@ public partial class GooglePalCommandsProvider : CommandProvider
         // fire event without changing settings
         _settingsManager.SendSavedUpdateEvent();
 
-        DisplayName = "Search Google";
+        DisplayName = "ChromePal";
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         _commands = [
             new CommandItem(searchPage),

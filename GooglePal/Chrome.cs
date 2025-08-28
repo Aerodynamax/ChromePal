@@ -1,12 +1,9 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using Windows.System.Profile;
-using static GooglePal.Chrome;
 
 namespace GooglePal
 {
@@ -16,6 +13,7 @@ namespace GooglePal
         {
             public required string Name { get; set; }
             public required string Folder { get; set; }
+            public required string ProfilePicturePath { get; set; }
         }
 
 
@@ -25,6 +23,8 @@ namespace GooglePal
         /// <returns>A List of Chrome.Profile objects with the Name and Folder of the profile.</returns>
         public static List<Profile> GetChromeProfiles()
         {
+            string defaultProfilePicture = "\uE77B";
+
             List<Profile> profiles = [];
 
             string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -58,8 +58,22 @@ namespace GooglePal
 
                             if (!string.IsNullOrEmpty(displayName))
                             {
-                                // add profile
-                                profiles.Add(new() { Name = displayName, Folder = directoryName });
+                                if (property.Value.TryGetProperty("gaia_picture_file_name", out var iconRelativePathElement))
+                                {
+                                    // get profile icon
+                                    string? iconPath = iconRelativePathElement.GetString();
+
+                                    if (iconPath != null) iconPath = Path.Combine(appDataPath, "Google", "Chrome", "User Data", directoryName, iconPath);
+
+                                    // add profile
+                                    profiles.Add(
+                                        new() {
+                                            Name = displayName,
+                                            Folder = directoryName,
+                                            ProfilePicturePath = iconPath ?? defaultProfilePicture
+                                        }
+                                    );
+                                }
                             }
                         }
                     }
@@ -70,11 +84,11 @@ namespace GooglePal
         }
 
         /// <summary>
-        /// Opens a URL in a Chrome profile specified by its display name.
+        ///     Opens a URL in a Chrome profile specified by its display name.
         /// </summary>
         /// <param name="profileName">The display name of the profile.</param>
         /// <param name="url">The URL to open.</param>
-        public static void OpenUrlInChromeProfile(string url, string profileName)
+        public static void OpenUrlInChromeProfile(string url, string profileName, bool? newWindow = false)
         {
             // get profile
 
@@ -91,19 +105,18 @@ namespace GooglePal
             var startInfo = new ProcessStartInfo
             {
                 FileName = chromeExe,
-                Arguments = $"--profile-directory=\"{_profile.Folder}\" \"{url}\"",
-                UseShellExecute = false
+                Arguments = $"{((newWindow == true) ? "--new-window" : "")} --profile-directory=\"{_profile.Folder}\" \"{url}\"",
+                UseShellExecute = true
             };
 
             Process.Start(startInfo);
         }
 
         /// <summary>
-        /// Opens a URL in a Chrome profile specified by its display name.
+        ///     Opens a URL in a Chrome in the last used Chrome profile.
         /// </summary>
-        /// <param name="profileName">The display name of the profile.</param>
         /// <param name="url">The URL to open.</param>
-        public static void OpenUrlInChrome(string url)
+        public static void OpenUrlInChrome(string url, bool? newWindow = false)
         {
             string chromeExe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 
@@ -113,8 +126,8 @@ namespace GooglePal
             var startInfo = new ProcessStartInfo
             {
                 FileName = chromeExe,
-                Arguments = $"\"{url}\"",
-                UseShellExecute = false
+                Arguments = $"{((newWindow == true) ? "--new-window" : "")} \"{url}\"",
+                UseShellExecute = true
             };
 
             Process.Start(startInfo);
@@ -192,9 +205,6 @@ namespace GooglePal
                 // remove first if out of range
                 if (history.Count > maxLength)
                     history = history.Skip(history.Count - maxLength).ToList();
-
-                
-                history.ForEach(t => Debug.WriteLine(t));
 
                 // return profiles
                 return history;
