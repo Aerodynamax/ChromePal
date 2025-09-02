@@ -39,6 +39,8 @@ public class SettingsManager : JsonSettingsManager
     public bool OpenInNewBrowser => _OpenInNewBrowser.Value;
 
 
+    // TODO: add static profile options
+
     private readonly ToggleSetting _ProfilesStatic = new(
         key: nameof(ProfilesStatic),
         label: "Static profile list",
@@ -47,18 +49,13 @@ public class SettingsManager : JsonSettingsManager
     );
     public bool ProfilesStatic => _ProfilesStatic.Value;
 
-
     private readonly ChoiceSetSetting _ProfileList = new(
         key: Namespaced(nameof(ProfileList)),
         label: "Profile List",
         description: "Set the list of profiles.",
         choices: [
-            new ChoiceSetSetting.Choice("None", "0"),
-            new ChoiceSetSetting.Choice("5",    "5"),
-            new ChoiceSetSetting.Choice("10",  "10"),
-            new ChoiceSetSetting.Choice("25",  "25"),
-            new ChoiceSetSetting.Choice("50",  "50"),
-        ]
+            new ChoiceSetSetting.Choice("TODO", "0")
+            ]
     );
     public int ProfileList
     {
@@ -85,6 +82,7 @@ public class SettingsManager : JsonSettingsManager
             new ChoiceSetSetting.Choice("10",  "10"),
             new ChoiceSetSetting.Choice("25",  "25"),
             new ChoiceSetSetting.Choice("50",  "50"),
+            new ChoiceSetSetting.Choice("Infinite",  "99999"),
         ]
     );
     public int HistoryLength

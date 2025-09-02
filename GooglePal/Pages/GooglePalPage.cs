@@ -35,11 +35,11 @@ internal sealed partial class GooglePalPage : DynamicListPage
     // suggestions
     public List<string> Suggestions = [];
 
-    public bool typingState = true;
 
     // rate limiting
     public int RatelimitTimeMS = 300;
     public int OutOfDateLength = 3;
+
 
     private string previousSearchQuery = "";
 
@@ -54,6 +54,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     public List<Chrome.Profile> Profiles;
     public string DefaultProfile;
+
+    public bool OpenInNewWindow;
 
     // history
     public string HistoryConfigPath = Path.Combine(
@@ -74,19 +76,11 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // don't query if empty
         if (string.IsNullOrEmpty(SearchText.Trim())) return;
 
-        // update suggestions if very out of date
-        if (SearchText.Length > previousSearchQuery.Length + OutOfDateLength || SearchText.Length < previousSearchQuery.Length - OutOfDateLength)
-            Task.Run(async () => await UpdateSuggestions(
+        Task.Run(async () => await UpdateSuggestions(
                 previousSearchText: SearchText,
-                requireNoChangeTimeMS: 0)
-            );
-
-        // update suggestions thread when user stops typing
-        else
-            Task.Run(async () => await UpdateSuggestions(
-                previousSearchText: SearchText,
-                requireNoChangeTimeMS: 0)
-            );
+                requireNoChangeTimeMS: 0
+            )
+        );
 
     }
 
@@ -102,7 +96,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
     {
         HttpClient client = new();
 
-        string url = $"https://suggestqueries.google.com/complete/search?output=toolbar&gl=au&hl=en&q={HttpUtility.UrlEncode(query)}";
+        // TODO: switch to [ https://github.com/Daydreamer-riri/CmdPal-WebSearchShortcut/blob/main/CmdPalWebSearchShortcut/WebSearchShortcut/SuggestionsProviders/Google.cs ]
+
+        string url = $"https://www.google.com/complete/search?output=toolbar&q={HttpUtility.UrlEncode(query)}";
 
         HttpResponseMessage response = client.GetAsync(url).Result;
 
@@ -170,7 +166,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     private ListItem CreateSearchListItem(string query)
     {
-        bool isURL = IsValidDomainName(query);
+        bool isURL = Chrome.IsValidUrl(query);
 
         // Create context menu items for each Chrome profile
         var moreCommands = Profiles.Select(profile =>
@@ -178,7 +174,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 name: isURL ? $"Visit ({profile.Name})" : $"Search ({profile.Name})",
                 title: isURL ? $"Visit as: {profile.Name}" : $"Search as: {profile.Name}",
                 action: () => {
-
                     // change default
                     DefaultProfile = profile.Name;
 
@@ -194,17 +189,19 @@ internal sealed partial class GooglePalPage : DynamicListPage
                     if (History.Count > HistoryLength)
                         History = History.Skip(History.Count - HistoryLength).ToList();
 
-
-                    Chrome.OpenUrlInChromeProfile(
-                        url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
-                        profileName: profile.Name
-                    );
-
                     // save history
                     Chrome.SaveHistory(History, HistoryConfigPath);
 
                     // save profiles
                     Chrome.SaveProfiles(Profiles, ProfileConfigPath);
+
+
+                    // open chrome & allow UI to hide
+                    Task.Run(() => Chrome.OpenUrlInChromeProfile(
+                        url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
+                        profileName: profile.Name,
+                        newWindow: OpenInNewWindow
+                    ));
                 }
             )
             {
@@ -236,15 +233,16 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 if (History.Count > HistoryLength)
                     History = History.Skip(History.Count - HistoryLength).ToList();
 
-
-                Chrome.OpenUrlInChromeProfile(
-                    url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
-                    profileName: DefaultProfile
-                );
-
                 // save history
                 Chrome.SaveHistory(History, HistoryConfigPath);
 
+                
+                // open chrome & allow UI to hide
+                Task.Run(() => Chrome.OpenUrlInChromeProfile(
+                    url: isURL ? query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(query)}",
+                    profileName: DefaultProfile,
+                    newWindow: OpenInNewWindow
+                ));
             })
             {
                 Name = isURL ? $"Visit ({DefaultProfile})" : $"Search ({DefaultProfile})",
@@ -277,7 +275,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
                     Chrome.OpenUrlInChromeProfile(
                         url: "chrome://newtab",
-                        profileName: profile.Name
+                        profileName: profile.Name,
+                        newWindow: OpenInNewWindow
                     );
 
                     // save profiles
@@ -308,7 +307,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
         ListItem listItem = new ListItem(
             new AnonymousCommand(() => Chrome.OpenUrlInChromeProfile(
                         url: "chrome://newtab",
-                        profileName: DefaultProfile
+                        profileName: DefaultProfile,
+                        newWindow: OpenInNewWindow
                     ))
             { Name = $"Open Chrome ({DefaultProfile})", Icon = SearchIcon }
 
@@ -357,9 +357,11 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
     {
+        OpenInNewWindow = eventArgs.OpenInNewBrowser;
+
         HistoryLength = eventArgs.HistoryLength;
 
-        Debug.WriteLine($"History updated: {eventArgs.HistoryLength}");
+        Debug.WriteLine($"Settings updated: {eventArgs.HistoryLength}");
 
         // truncate history if required
         if (History.Count > HistoryLength)
