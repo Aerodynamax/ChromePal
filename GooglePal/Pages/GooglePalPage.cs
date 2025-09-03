@@ -1,8 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation
-// The Microsoft Corporation licenses this file to you under the MIT license.
-// See the LICENSE file in the project root for more information.
-
-using GooglePal.Components;
+﻿using GooglePal.Components;
 using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
@@ -14,7 +10,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
 using Windows.System;
-using static GooglePal.Chrome;
 
 namespace GooglePal;
 
@@ -62,17 +57,16 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public int LevenshteinMaxDistance = 3;
 
     // update UI when search bar changes
-    public override void UpdateSearchText(string oldSearch, string newSearch)
+    public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
         RaiseItemsChanged(Suggestions.Count + 1);
 
         // don't query if empty
         if (string.IsNullOrEmpty(SearchText.Trim())) return;
 
-        Task.Run(async () => await UpdateSuggestions(
+        await UpdateSuggestions(
                 previousSearchText: SearchText,
                 requireNoChangeTimeMS: 0
-            )
         );
 
     }
@@ -106,11 +100,21 @@ internal sealed partial class GooglePalPage : DynamicListPage
             ];
         }
 
+        // create user's exact query option
+        // [ https://stackoverflow.com/a/7581824 ]
+        bool userTypedURL = Google.IsValidURL(SearchText);
+
+        ListItem userQuery = CreateSearchListItem(new() {
+            Query = SearchText,
+            Type = userTypedURL ? Google.SuggestionType.Website : Google.SuggestionType.Query,
+            IsURL = userTypedURL
+        });
+
         // format suggestions into command palette list items
         List<ListItem> queries = [
 
             // always show raw search text option
-            CreateSearchListItem(new() { Query = SearchText, Type = Google.SuggestionType.Query, IsURL = false })
+            userQuery
         ];
 
 
@@ -222,23 +226,18 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         previousSearchQuery = SearchText;
 
-        Debug.WriteLine("Updating suggestions");
-
+        //Debug.WriteLine("Updating suggestions");
+        
         // update suggestions (not including values that are the search text)
-        Suggestions = chrome.GetSuggestionsAsync(SearchText.Trim()).Result.suggestions;
+        Suggestions = (await chrome.GetSuggestionsAsync(SearchText.Trim())).suggestions;
 
         // add history
-        Suggestions.InsertRange(
-            index: 0,
-            // add items that are valid and aren't currently in suggestions
-            collection: chrome.History.Where(item =>
-                (
-                    ComputeDistanceLevenshtein(SearchText, item.Query) <= LevenshteinMaxDistance ||
-                    item.Query.StartsWith(SearchText.Trim(), StringComparison.InvariantCultureIgnoreCase)
-                ) &&
-                !Suggestions.Any(t => t.Query == item.Query)
-            )
-        );
+        Google.Suggestion[] historyItems = RelevantFromHistory(SearchText);
+
+        // remove history suggestions
+        Suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
+
+        Suggestions.InsertRange(0, historyItems);
 
         // update UI
         RaiseItemsChanged(Suggestions.Count + 1);
@@ -255,10 +254,36 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Debug.WriteLine($"Settings updated: {eventArgs.HistoryLength}");
     }
 
-
-    bool IsInHistory(string query)
+    // compare the first part of the history query to the current query
+    // and order by most similar
+    Google.Suggestion[] RelevantFromHistory(string query)
     {
-        return chrome.History.Where(item => ComputeDistanceLevenshtein(SearchText, item.Query) <= LevenshteinMaxDistance).Any();
+        // don't run for non queries
+        if (query.Length < 1) return [];
+
+        // if there aren't enough letters, use exact match
+        if (query.Length <= LevenshteinMaxDistance)
+        {
+            return chrome.History
+                .Where(item => item.Query.Length >= query.Length)               // only check history items longer than query
+                .Where(item => query == item.Query.Substring(0, query.Length))  // check if the first chars match exactly
+                //.OrderBy(item => ) // TODO: order by recency & search count
+                .ToArray();
+        }
+
+        Google.Suggestion[] t = chrome.History
+            .Where(item => item.Query.Length >= query.Length)
+            .Where(item => ComputeDistanceLevenshtein(
+                query,
+                item.Query.Substring(0, query.Length)) < LevenshteinMaxDistance
+            )
+            .OrderBy(item => ComputeDistanceLevenshtein(
+                query,
+                item.Query.Substring(0, query.Length)
+            ))
+            .ToArray();
+
+        return t;
     }
 
 

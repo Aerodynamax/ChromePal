@@ -12,7 +12,7 @@ using System.Web;
 
 namespace GooglePal
 {
-    public class Chrome : Google
+    internal class Chrome : Google
     {
         public class Profile
         {
@@ -29,9 +29,9 @@ namespace GooglePal
         );
         private int HistoryLength = 999;
 
-        private int LevenshteinMaxDistance = 3;
+        //private int LevenshteinMaxDistance = 3;
 
-        public List<Google.Suggestion> History = [];
+        public List<Suggestion> History;
 
         public Chrome()
         {
@@ -207,13 +207,14 @@ namespace GooglePal
             }
 
 
-            // start chrome using start as it's the only way I found to reliably gain focus
+            // start chrome using start as to gain focus (not working reliably anymore :( )
             var startInfo = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
                 WindowStyle = ProcessWindowStyle.Hidden,
                 Arguments = $"/c start \"\" \"{chromeExe}\" {((newWindow == true) ? "--new-window " : "")}--profile-directory=\"{profile.Folder}\" \"{url}\"",
-                UseShellExecute = true
+                UseShellExecute = false,
+                WorkingDirectory = "C:\\Windows\\System32"
             };
 
             Process? chromeProcess = Process.Start(startInfo);
@@ -243,7 +244,7 @@ namespace GooglePal
         }
 
         // https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/how-to
-        public static void SaveProfiles(List<Chrome.Profile> profiles, string filePath)
+        public static void SaveProfiles(List<Profile> profiles, string filePath)
         {
             string jsonString = JsonConvert.SerializeObject(profiles, Formatting.Indented);
 
@@ -252,7 +253,7 @@ namespace GooglePal
             File.WriteAllText(filePath, jsonString);
         }
 
-        public static List<Chrome.Profile> LoadProfiles(string filePath)
+        public static List<Profile> LoadProfiles(string filePath)
         {
             var allProfiles = GetChromeProfiles();
             try
@@ -284,7 +285,7 @@ namespace GooglePal
         }
 
 
-        public static void SaveHistory(List<Google.Suggestion> history, string filePath)
+        public static void SaveHistory(List<Suggestion> history, string filePath)
         {
             string jsonString = JsonConvert.SerializeObject(history, Formatting.Indented);
 
@@ -301,7 +302,7 @@ namespace GooglePal
             File.WriteAllText(HistoryConfigPath, jsonString);
         }
 
-        public static List<Google.Suggestion> LoadHistory(string filePath, int? maxLength = null)
+        public static List<Suggestion> LoadHistory(string filePath, int? maxLength = null)
         {
             try
             {
@@ -309,7 +310,7 @@ namespace GooglePal
 
                 string jsonString = File.ReadAllText(filePath);
 
-                List<Google.Suggestion> history = JsonConvert.DeserializeObject<List<Google.Suggestion>>(jsonString) ?? [];
+                List<Suggestion> history = JsonConvert.DeserializeObject<List<Suggestion>>(jsonString) ?? [];
 
                 // remove duplicates
                 history = history.Distinct().ToList();
@@ -329,8 +330,7 @@ namespace GooglePal
                 return [];
             }
         }
-
-        public List<Google.Suggestion> LoadHistory()
+        public List<Suggestion> LoadHistory()
         {
             try
             {
@@ -338,7 +338,7 @@ namespace GooglePal
 
                 string jsonString = File.ReadAllText(HistoryConfigPath);
 
-                List<Google.Suggestion> history = JsonConvert.DeserializeObject<List<Google.Suggestion>>(jsonString) ?? [];
+                List<Suggestion> history = JsonConvert.DeserializeObject<List<Suggestion>>(jsonString) ?? [];
 
                 // remove duplicates
                 history = history.Distinct().ToList();
