@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <RootNamespace>GooglePal</RootNamespace>
@@ -42,6 +42,7 @@
     <PackageReference Include="Microsoft.Windows.CsWinRT" />
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <PackageReference Include="Microsoft.Web.WebView2" />
+    <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="System.Text.Json" />
     <PackageReference Include="Shmuelie.WinRTServer" />
   </ItemGroup>

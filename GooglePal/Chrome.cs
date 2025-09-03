@@ -1,19 +1,67 @@
-﻿using System;
+﻿using GooglePal.Pages;
+using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Web;
 
 namespace GooglePal
 {
-    public class Chrome
+    public class Chrome : Google
     {
         public class Profile
         {
             public required string Name { get; set; }
             public required string Folder { get; set; }
             public required string ProfilePicturePath { get; set; }
+        }
+
+
+        // history
+        private string HistoryConfigPath = Path.Combine(
+            Path.GetDirectoryName(System.AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
+            "history.json"
+        );
+        private int HistoryLength = 999;
+
+        private int LevenshteinMaxDistance = 3;
+
+        public List<Google.Suggestion> History = [];
+
+        public Chrome()
+        {
+            History = LoadHistory();
+        }
+
+        public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
+        {
+            // update history length
+            HistoryLength = eventArgs.HistoryLength;
+
+            // truncate history if required
+            if (History.Count > HistoryLength)
+                History = History.Skip(History.Count - HistoryLength).ToList();
+
+            // save
+            SaveHistory();
+        }
+
+        public override async Task<Suggestions> GetSuggestionsAsync(string query, CancellationToken cancellationToken = default)
+        {
+            Suggestions suggestions = await base.GetSuggestionsAsync(query, cancellationToken);
+
+            // change type to history if suggestion in history
+            foreach (Suggestion suggestion in suggestions.suggestions)
+            {
+                if (History.Any(item => item.Query == suggestion.Query)) suggestion.Type = SuggestionType.History;
+            }
+
+            return suggestions;
         }
 
 
@@ -86,8 +134,9 @@ namespace GooglePal
         /// <summary>
         ///     Opens a URL in a Chrome profile specified by its display name.
         /// </summary>
-        /// <param name="profileName">The display name of the profile.</param>
         /// <param name="url">The URL to open.</param>
+        /// <param name="profileName">The display name of the profile.</param>
+        /// <param name="newWindow">Whether to open a new window or a new tab.</param>
         public static void OpenUrlInChromeProfile(string url, string profileName, bool? newWindow = false)
         {
             // check if chrome installed
@@ -113,6 +162,64 @@ namespace GooglePal
             Process? chromeProcess = Process.Start(startInfo);
         }
 
+
+        /// <summary>
+        ///     Opens a URL in a Chrome profile specified by its display name.
+        /// </summary>
+        /// <param name="url">The URL to open.</param>
+        /// <param name="profileName">The display name of the profile.</param>
+        /// <param name="newWindow">Whether to open a new window or a new tab.</param>
+        public void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false)
+        {
+            // check if chrome installed
+            string chromeExe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+
+            if (!File.Exists(chromeExe)) return;
+
+            // get profile
+            Profile? profile = GetChromeProfiles().FirstOrDefault(_profile => _profile.Name == profileName);
+
+            if (profile == null) return;
+
+            // create history element from url
+            Google.Suggestion historyItem;
+
+            if (url.StartsWith("https://www.google.com/search?q=", StringComparison.CurrentCulture))
+                historyItem = new()
+                {
+                    Query = HttpUtility.UrlDecode(url.Substring("https://www.google.com/search?q=".Length)),
+                    Type = SuggestionType.History,
+                    IsURL = false
+                };
+            else
+                historyItem = new()
+                {
+                    Query = url,
+                    Type = SuggestionType.History,
+                    IsURL = true
+                };
+
+            // add to history
+            if (!History.Any(item => item.Query == historyItem.Query))
+            {
+                History.Add(historyItem);
+                SaveHistory();
+            }
+
+
+            // start chrome using start as it's the only way I found to reliably gain focus
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                WindowStyle = ProcessWindowStyle.Hidden,
+                Arguments = $"/c start \"\" \"{chromeExe}\" {((newWindow == true) ? "--new-window " : "")}--profile-directory=\"{profile.Folder}\" \"{url}\"",
+                UseShellExecute = true
+            };
+
+            Process? chromeProcess = Process.Start(startInfo);
+        }
+
+
         /// <summary>
         ///     Opens a URL in a Chrome in the last used Chrome profile.
         /// </summary>
@@ -136,18 +243,16 @@ namespace GooglePal
         }
 
         // https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/how-to
-        public static void SaveProfiles(List<Profile> profiles, string filePath)
+        public static void SaveProfiles(List<Chrome.Profile> profiles, string filePath)
         {
-            JsonSerializerOptions JSONOptions = new JsonSerializerOptions { WriteIndented = true };
-
-            string jsonString = JsonSerializer.Serialize(profiles, JSONOptions);
+            string jsonString = JsonConvert.SerializeObject(profiles, Formatting.Indented);
 
             Debug.WriteLine($"Saving to: {filePath}");
 
             File.WriteAllText(filePath, jsonString);
         }
 
-        public static List<Profile> LoadProfiles(string filePath)
+        public static List<Chrome.Profile> LoadProfiles(string filePath)
         {
             var allProfiles = GetChromeProfiles();
             try
@@ -156,7 +261,7 @@ namespace GooglePal
 
                 string jsonString = File.ReadAllText(filePath);
 
-                List<Profile> profiles = JsonSerializer.Deserialize<List<Profile>>(jsonString) ?? [];
+                List<Profile> profiles = JsonConvert.DeserializeObject<List<Profile>>(jsonString) ?? [];
 
                 // add any missing profiles
                 profiles.AddRange(
@@ -179,18 +284,24 @@ namespace GooglePal
         }
 
 
-        public static void SaveHistory(List<string> history, string filePath)
+        public static void SaveHistory(List<Google.Suggestion> history, string filePath)
         {
-            JsonSerializerOptions JSONOptions = new JsonSerializerOptions { WriteIndented = true };
-
-            string jsonString = JsonSerializer.Serialize(history, JSONOptions);
+            string jsonString = JsonConvert.SerializeObject(history, Formatting.Indented);
 
             Debug.WriteLine($"Saving to: {filePath}");
 
             File.WriteAllText(filePath, jsonString);
         }
+        public void SaveHistory()
+        {
+            string jsonString = JsonConvert.SerializeObject(History, Formatting.Indented);
 
-        public static List<string> LoadHistory(string filePath, int maxLength)
+            Debug.WriteLine($"Saving to: {HistoryConfigPath}");
+
+            File.WriteAllText(HistoryConfigPath, jsonString);
+        }
+
+        public static List<Google.Suggestion> LoadHistory(string filePath, int? maxLength = null)
         {
             try
             {
@@ -198,17 +309,16 @@ namespace GooglePal
 
                 string jsonString = File.ReadAllText(filePath);
 
-                List<string> history = JsonSerializer.Deserialize<List<string>>(jsonString) ?? [];
+                List<Google.Suggestion> history = JsonConvert.DeserializeObject<List<Google.Suggestion>>(jsonString) ?? [];
 
                 // remove duplicates
-
                 history = history.Distinct().ToList();
 
                 // remove first if out of range
                 if (history.Count > maxLength)
-                    history = history.Skip(history.Count - maxLength).ToList();
+                    history = history.Skip(history.Count - (maxLength ?? 0)).ToList();
 
-                // return profiles
+                // return history
                 return history;
 
             }
@@ -220,44 +330,30 @@ namespace GooglePal
             }
         }
 
-
-        // [ https://github.com/Daydreamer-riri/CmdPal-WebSearchShortcut/blob/main/CmdPalWebSearchShortcut/WebSearchShortcut/Services/UriHelper.cs ]
-
-        /// <summary>
-        /// Attempts to create a valid URI from a string, with automatic https:// prefix if needed
-        /// </summary>
-        /// <param name="url">The URL string to convert</param>
-        /// <returns>A valid URI or null if the URL is invalid</returns>
-        public static Uri? GetUri(string url)
+        public List<Google.Suggestion> LoadHistory()
         {
-            if (string.IsNullOrWhiteSpace(url)) return null;
-
-            if (!url.Contains('.')) return null;
-
-
-            // Try to create URI as-is
-            if (Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
+            try
             {
-                return uri;
-            }
+                Debug.WriteLine($"Loading history from: {HistoryConfigPath}");
 
-            // Try with https:// prefix
-            if (Uri.TryCreate("https://" + url, UriKind.Absolute, out uri))
+                string jsonString = File.ReadAllText(HistoryConfigPath);
+
+                List<Google.Suggestion> history = JsonConvert.DeserializeObject<List<Google.Suggestion>>(jsonString) ?? [];
+
+                // remove duplicates
+                history = history.Distinct().ToList();
+
+                // return history
+                return history;
+
+            }
+            catch (FileNotFoundException ex)
             {
-                return uri;
+                Debug.WriteLine($"Failed to load history: {ex}");
+                // return none if none exist
+                return [];
             }
-
-            return null;
         }
 
-        /// <summary>
-        /// Checks if a URL string is valid
-        /// </summary>
-        /// <param name="url">The URL to validate</param>
-        /// <returns>True if the URL is valid, false otherwise</returns>
-        public static bool IsValidUrl(string url)
-        {
-            return GetUri(url) != null;
-        }
     }
 }
