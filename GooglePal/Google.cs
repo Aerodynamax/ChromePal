@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -31,7 +32,7 @@ namespace GooglePal
             public required bool IsURL;
         }
 
-        public class Suggestions
+        public partial class Suggestions
         {
             public required string Query;
 
@@ -54,9 +55,21 @@ namespace GooglePal
                 // deserialise
                 var json = await JsonDocument.ParseAsync(response, cancellationToken: cancellationToken);
 
-
                 var suggestionQueries = json.RootElement.EnumerateArray().ElementAt(1);
                 var suggestionType = json.RootElement.EnumerateArray().ElementAt(4).GetProperty("google:suggesttype");
+
+                // add query as suggestion
+                bool queryIsUrl = Google.IsValidURL(query);
+
+                suggestions.Add(
+                    new Suggestion()
+                    {
+                        Query = query,
+                        Type = queryIsUrl ? Google.SuggestionType.Website : Google.SuggestionType.Query,
+                        IsURL = queryIsUrl
+                    }
+                );
+
 
                 // format query strings
                 string[] queryTitles = [
@@ -111,7 +124,6 @@ namespace GooglePal
 
             }
             catch (Exception ex) { Debug.WriteLine($"ERROR: {ex}"); }
-
 
             return new Suggestions() { Query = query, suggestions = suggestions };
         }

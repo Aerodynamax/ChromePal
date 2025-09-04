@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
 using Windows.System;
+using static GooglePal.Google;
 
 namespace GooglePal;
 
@@ -22,7 +23,7 @@ public class CachedItem
 internal sealed partial class GooglePalPage : DynamicListPage
 {
     // suggestions
-    public List<Google.Suggestion> Suggestions = [];
+    public List<Suggestion> Suggestions = [];
 
     public Chrome chrome = new();
 
@@ -59,16 +60,30 @@ internal sealed partial class GooglePalPage : DynamicListPage
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
-        RaiseItemsChanged(Suggestions.Count + 1);
+        List<Suggestion> previousSuggestions = Suggestions;
 
         // don't query if empty
-        if (string.IsNullOrEmpty(SearchText.Trim())) return;
-
-        await UpdateSuggestions(
+        if (!string.IsNullOrEmpty(SearchText.Trim()))
+            await UpdateSuggestions(
                 previousSearchText: SearchText,
                 requireNoChangeTimeMS: 0
-        );
+            );
+        else
+            Suggestions = [];
 
+        if (Suggestions != previousSuggestions)
+            // update UI
+            for (int i = 0; i < 5; i++)
+            {
+                try
+                {
+                    // raiseItemsChanged can error on faulty / uninitialised state
+                    RaiseItemsChanged(Suggestions.Count);
+                    break;
+                }
+                catch (NullReferenceException) { await Task.Delay(100); }
+
+            }
     }
 
     // icons
@@ -100,32 +115,17 @@ internal sealed partial class GooglePalPage : DynamicListPage
             ];
         }
 
-        // create user's exact query option
-        // [ https://stackoverflow.com/a/7581824 ]
-        bool userTypedURL = Google.IsValidURL(SearchText);
-
-        ListItem userQuery = CreateSearchListItem(new() {
-            Query = SearchText,
-            Type = userTypedURL ? Google.SuggestionType.Website : Google.SuggestionType.Query,
-            IsURL = userTypedURL
-        });
-
         // format suggestions into command palette list items
-        List<ListItem> queries = [
-
-            // always show raw search text option
-            userQuery
-        ];
-
+        List<ListItem> queries = [];
 
         // convert suggestions into list items and add to the queries list
-        queries.AddRange(Suggestions.Select(CreateSearchListItem).Where(suggestion => suggestion.Title.Trim() != SearchText.Trim()));
+        queries.AddRange(Suggestions.Select(CreateSearchListItem).Distinct());
 
         // show search options
         return queries.ToArray();
     }
 
-    private ListItem CreateSearchListItem(Google.Suggestion searchItem)
+    private ListItem CreateSearchListItem(Suggestion searchItem)
     {
         return new SearchItem(
             searchItem: searchItem,
@@ -227,20 +227,32 @@ internal sealed partial class GooglePalPage : DynamicListPage
         previousSearchQuery = SearchText;
 
         //Debug.WriteLine("Updating suggestions");
-        
-        // update suggestions (not including values that are the search text)
+
+        // update suggestions
         Suggestions = (await chrome.GetSuggestionsAsync(SearchText.Trim())).suggestions;
 
-        // add history
-        Google.Suggestion[] historyItems = RelevantFromHistory(SearchText);
 
-        // remove history suggestions
-        Suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
+        // find relevant history
+        Suggestion[] historyItems = RelevantFromHistory(SearchText);
 
-        Suggestions.InsertRange(0, historyItems);
+        if (historyItems.Length > 0 && Suggestions.Count > 0)
+        {
+            // remove history suggestions
+            Suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
 
-        // update UI
-        RaiseItemsChanged(Suggestions.Count + 1);
+            // add history
+
+            Suggestion[] historyImportant = historyItems.Where(item =>
+                    item.IsURL == true &&
+                    SearchText.Trim() == item.Query.Trim().Substring(0, SearchText.Trim().Length)
+            ).ToArray();
+
+            historyItems = historyItems.DistinctBy(historyItem => historyImportant.Contains(historyItem)).ToArray();
+
+            // add relevant urls as suggestions above the user prompt
+            Suggestions.InsertRange(1, historyItems);
+            Suggestions.InsertRange(0, historyImportant);
+        }
     }
 
 
@@ -256,7 +268,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     // compare the first part of the history query to the current query
     // and order by most similar
-    Google.Suggestion[] RelevantFromHistory(string query)
+    Suggestion[] RelevantFromHistory(string query)
     {
         // don't run for non queries
         if (query.Length < 1) return [];
