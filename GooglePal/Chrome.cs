@@ -5,10 +5,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using Interop.UIAutomationClient;
 
 namespace GooglePal
 {
@@ -206,18 +209,41 @@ namespace GooglePal
                 SaveHistory();
             }
 
-
-            // start chrome using start as to gain focus (not working reliably anymore :( )
+            // start chrome args
             var startInfo = new ProcessStartInfo
             {
-                FileName = "cmd.exe",
-                WindowStyle = ProcessWindowStyle.Hidden,
-                Arguments = $"/c start \"\" \"{chromeExe}\" {((newWindow == true) ? "--new-window " : "")}--profile-directory=\"{profile.Folder}\" \"{url}\"",
-                UseShellExecute = false,
-                WorkingDirectory = "C:\\Windows\\System32"
+                FileName = chromeExe,
+                WindowStyle = ProcessWindowStyle.Maximized,
+                Arguments = $"--start-maximised {((newWindow == true) ? "--new-window " : "")}--profile-directory=\"{profile.Folder}\" \"{url}\"",
+                UseShellExecute = true
             };
 
+            // snapshot current chrome window titles
+            List<TopLevelWindowInfo> chromeList = FindChromeWindows();
+
+            // start chrome
             Process? chromeProcess = Process.Start(startInfo);
+
+            // wait for chrome to open
+            chromeProcess?.WaitForInputIdle(1000);
+
+
+            // only get chrome processes whose title changed
+            TopLevelWindowInfo[] chromeWindows = [];
+
+            // wait until tab is opened (required for new windows)
+            while (chromeWindows.Length < 1)
+            {
+                chromeWindows = FindChromeWindows()
+                    .Where(proc => !chromeList.Any(prevProc => 
+                        (prevProc.Hwnd == proc.Hwnd && prevProc.Title == proc.Title)
+                    )).ToArray();
+            }
+
+            TopLevelWindowInfo? chromeWindow = chromeWindows.FirstOrDefault();
+
+            // maximise & focus
+            if (chromeWindow != null) BringChromeWindowToFront(chromeWindow.Hwnd);
         }
 
 
@@ -355,5 +381,167 @@ namespace GooglePal
             }
         }
 
+
+        // P/Invoke declarations
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClass, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetTopWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        private const int SW_RESTORE = 9;
+        private const int SW_SHOW = 5;
+        private const int SW_MAXIMIZE = 3;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy, uint uFlags);
+
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOACTIVATE = 0x0010;
+
+        // Helper: enumerate visible top-level windows and return a list with info
+        public class TopLevelWindowInfo
+        {
+            public IntPtr Hwnd { get; set; }
+            public string Title { get; set; } = "";
+            public string ClassName { get; set; } = "";
+            public int ProcessId { get; set; }
+            public string ProcessName { get; set; } = "";
+        }
+
+        public static List<TopLevelWindowInfo> EnumerateTopLevelWindows()
+        {
+            var list = new List<TopLevelWindowInfo>();
+            EnumWindows((hWnd, lParam) =>
+            {
+                if (!IsWindowVisible(hWnd))
+                    return true; // continue
+
+                var sb = new StringBuilder(1024);
+                GetWindowText(hWnd, sb, sb.Capacity);
+                string title = sb.ToString();
+
+                var sc = new StringBuilder(256);
+                GetClassName(hWnd, sc, sc.Capacity);
+                string cls = sc.ToString();
+
+                GetWindowThreadProcessId(hWnd, out uint pid);
+                string procName = "";
+                try
+                {
+                    var p = Process.GetProcessById((int)pid);
+                    procName = p.ProcessName;
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                list.Add(new TopLevelWindowInfo
+                {
+                    Hwnd = hWnd,
+                    Title = title,
+                    ClassName = cls,
+                    ProcessId = (int)pid,
+                    ProcessName = procName
+                });
+
+                return true;
+            }, IntPtr.Zero);
+
+            return list;
+        }
+
+        // find candidate Chrome windows. Optionally filter by title substring (page title).
+        public static List<TopLevelWindowInfo> FindChromeWindows(string? titleSubstring = null)
+        {
+            var all = EnumerateTopLevelWindows();
+            var chromeWins = all.Where(w => string.Equals(w.ProcessName, "chrome", StringComparison.OrdinalIgnoreCase)
+                                           || string.Equals(w.ProcessName, "msedge", StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+
+            if (!string.IsNullOrEmpty(titleSubstring))
+            {
+                // try to match title first (case-insensitive)
+                var matching = chromeWins.Where(w => !string.IsNullOrEmpty(w.Title) &&
+                                                     w.Title.Contains(titleSubstring, StringComparison.OrdinalIgnoreCase))
+                                         .ToList();
+                if (matching.Count != 0)
+                    return matching;
+            }
+
+            // If none matched by title, return all chrome windows (z-order is not guaranteed by EnumWindows,
+            // but earlier windows in returned list often are higher in z-order — test and adapt for your case).
+            return chromeWins;
+        }
+
+        // shit sling until the window is focussed
+        public static bool BringChromeWindowToFront(IntPtr hWnd, int timeoutMs = 2000)
+        {
+            if (hWnd == IntPtr.Zero) return false;
+
+            try
+            {
+                // maximise
+                ShowWindow(hWnd, SW_MAXIMIZE); // SW_RESTORE
+
+                // Make topmost then clear topmost
+                SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+                SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+                // request focus via the accessibility framework (actually reliable :DDD)
+                var automation = new CUIAutomation();
+                IUIAutomationElement element = automation.ElementFromHandle(hWnd);
+                
+
+                if (element != null)
+                {
+                    // Try to set focus - this will throw if the automation element doesn't support focus
+                    try
+                    {
+                        element.SetFocus();
+
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"SetFocus failed: {ex.Message}");
+                        // Continue — fallback may still have succeeded visually.
+                    }
+                }
+
+                return true; // topmost trick usually produced a visual result
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }
