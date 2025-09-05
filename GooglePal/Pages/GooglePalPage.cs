@@ -60,44 +60,33 @@ internal sealed partial class GooglePalPage : DynamicListPage
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
-        List<Suggestion> previousSuggestions = Suggestions;
+        //List<Suggestion> previousSuggestions = Suggestions;
 
         // don't query if empty
-        if (!string.IsNullOrEmpty(SearchText.Trim()))
+        if (!string.IsNullOrEmpty(SearchText))
+        {
             await UpdateSuggestions(
                 previousSearchText: SearchText,
                 requireNoChangeTimeMS: 0
             );
-        else
-            Suggestions = [];
 
-        if (Suggestions != previousSuggestions)
-            // update UI
-            for (int i = 0; i < 5; i++)
-            {
-                try
-                {
-                    // raiseItemsChanged can error on faulty / uninitialised state
-                    RaiseItemsChanged(Suggestions.Count);
-                    break;
-                }
-                catch (NullReferenceException) { await Task.Delay(100); }
+            RaiseItemsChanged(Suggestions.Count);
+        }
+        else RaiseItemsChanged(1);
 
-            }
+
     }
 
     // icons
     private static IconInfo SearchIcon = new IconInfo("\uE721");
-    private static IconInfo VisitIcon = new IconInfo("\uE774");
-    private static IconInfo HistoryIcon = new IconInfo("\uE81C");
-    private static IconInfo CalculatorIcon = new IconInfo("\uE8EF");
-
 
     public GooglePalPage()
     {
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         Title = "Search Google";
         Name = "Search with Chrome";
+
+        PlaceholderText = "Search Google or type a URL";
 
         // load profiles
         Profiles = Chrome.LoadProfiles(ProfileConfigPath);
@@ -226,33 +215,39 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         previousSearchQuery = SearchText;
 
-        //Debug.WriteLine("Updating suggestions");
-
         // update suggestions
-        Suggestions = (await chrome.GetSuggestionsAsync(SearchText.Trim())).suggestions;
+        Suggestions = await chrome.GetSuggestionsAsync(SearchText.Trim());
 
 
         // find relevant history
         Suggestion[] historyItems = RelevantFromHistory(SearchText);
 
+
         if (historyItems.Length > 0 && Suggestions.Count > 0)
-        {
+        {   
             // remove history suggestions
             Suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
 
-            // add history
-
+            // find exact matching URLs to place above user query
             Suggestion[] historyImportant = historyItems.Where(item =>
-                    item.IsURL == true &&
-                    SearchText.Trim() == item.Query.Trim().Substring(0, SearchText.Trim().Length)
+                item.IsURL == true &&
+                SearchText.Trim() == item.Query.Trim().Substring(0, SearchText.Trim().Length)
             ).ToArray();
 
             historyItems = historyItems.DistinctBy(historyItem => historyImportant.Contains(historyItem)).ToArray();
 
             // add relevant urls as suggestions above the user prompt
-            Suggestions.InsertRange(1, historyItems);
-            Suggestions.InsertRange(0, historyImportant);
+            // (if the user prompt still exists!)
+            Suggestions.InsertRange(
+                index: (Suggestions.Count == 0) ? 0 : 1,
+                historyItems
+            );
+
+            if (historyImportant.Length > 0) Suggestions.InsertRange(0, historyImportant);
         }
+
+        // remove nulls that were causing errors
+        Suggestions.RemoveAll(suggestion => suggestion == null);
     }
 
 

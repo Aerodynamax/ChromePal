@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using static GooglePal.Google;
 
 namespace GooglePal
 {
@@ -28,18 +30,11 @@ namespace GooglePal
             public required bool IsURL;
         }
 
-        public partial class Suggestions
-        {
-            public required string Query;
-
-            public required List<Suggestion> suggestions;
-        }
-
         private HttpClient client = new();
 
 
         // [ https://github.com/Daydreamer-riri/CmdPal-WebSearchShortcut/blob/main/CmdPalWebSearchShortcut/WebSearchShortcut/SuggestionsProviders/Google.cs ]
-        public virtual async Task<Suggestions> GetSuggestionsAsync(string query, CancellationToken cancellationToken = default)
+        public virtual async Task<List<Suggestion>> GetSuggestionsAsync(string query, CancellationToken cancellationToken = default)
         {
             List<Suggestion> suggestions = [];
             string url = $"https://www.google.com/complete/search?output=chrome&q={HttpUtility.UrlEncode(query)}";
@@ -55,17 +50,16 @@ namespace GooglePal
                 var suggestionType = json.RootElement.EnumerateArray().ElementAt(4).GetProperty("google:suggesttype");
 
                 // add query as suggestion
-                bool queryIsUrl = Google.IsValidURL(query);
+                bool queryIsUrl = IsValidURL(query);
 
                 suggestions.Add(
                     new Suggestion()
                     {
                         Query = query,
-                        Type = queryIsUrl ? Google.SuggestionType.Website : Google.SuggestionType.Query,
+                        Type = queryIsUrl ? SuggestionType.Website : SuggestionType.Query,
                         IsURL = queryIsUrl
                     }
                 );
-
 
                 // format query strings
                 string[] queryTitles = [
@@ -96,7 +90,7 @@ namespace GooglePal
                 ];
 
                 // create suggestions from results
-                foreach ( var _query in queryTitles.Index())
+                foreach (var _query in queryTitles.Index())
                 {
                     SuggestionType type = queryTypes.ElementAt(_query.Index);
 
@@ -111,7 +105,8 @@ namespace GooglePal
                         queryText = queryText.TrimEnd('/');
                     }
 
-                    suggestions.Add(new Suggestion() {
+                    suggestions.Add(new Suggestion()
+                    {
                         Query = queryText,
                         Type = type,
                         IsURL = type == SuggestionType.Website
@@ -121,9 +116,44 @@ namespace GooglePal
             }
             catch (Exception ex) { Debug.WriteLine($"ERROR: {ex}"); }
 
-            return new Suggestions() { Query = query, suggestions = suggestions };
+            return suggestions;
         }
 
+        /// <summary>
+        ///     Creates a Suggestion element from a query.
+        ///     If isWebsite isn't specified it will validate the url.
+        /// </summary>
+        /// <param name="query">The user input to create suggestion from</param>
+        /// <param name="isWebsite">Whether the query is a website or not.</param>
+        /// <returns>Suggestion</returns>
+        public static Suggestion CreateSuggestion(string query, bool isWebsite)
+        {
+            return new Suggestion()
+            {
+                Query = query,
+                Type = isWebsite ? SuggestionType.Website : SuggestionType.Query,
+                IsURL = isWebsite
+            };
+        }
+
+        /// <summary>
+        ///     Creates a Suggestion element from a query.
+        ///     If isWebsite isn't specified it will validate the url.
+        /// </summary>
+        /// <param name="query">The user input to create suggestion from</param>
+        /// <param name="isWebsite">Whether the query is a website or not.</param>
+        /// <returns>Suggestion</returns>
+        public static Suggestion CreateSuggestion(string query)
+        {
+            bool isWebsite = IsValidURL(query);
+
+            return new Suggestion()
+            {
+                Query = query,
+                Type = (bool)isWebsite ? SuggestionType.Website : SuggestionType.Query,
+                IsURL = (bool)isWebsite
+            };
+        }
 
         /// <summary>
         /// Checks if a URL string is valid
@@ -133,7 +163,7 @@ namespace GooglePal
         public static bool IsValidURL(string url)
         {
             if (string.IsNullOrWhiteSpace(url)) return false;
-            
+
             // return on obviously malformed URLs
             if (url.Contains(' ')) return false;
             if (!url.Contains('.') && !url.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
@@ -142,7 +172,7 @@ namespace GooglePal
             string urlToParse = url.Trim();
 
             // add scheme if required
-            if (!urlToParse.Contains( "://")) urlToParse = "http://" + urlToParse;
+            if (!urlToParse.Contains("://")) urlToParse = "http://" + urlToParse;
 
             // check if valid (e.g. no spaces) + with scheme
             if (!Uri.TryCreate(urlToParse, UriKind.Absolute, out Uri? uriResult)) return false;
