@@ -140,6 +140,9 @@ namespace GooglePal
         /// <param name="newWindow">Whether to open a new window or a new tab.</param>
         public void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false)
         {
+            // invalidate cache as suggestions may change with browsing
+            //CachedQueries.Clear();
+
             // check if chrome installed
             string chromeExe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 

@@ -47,6 +47,8 @@ namespace GooglePal.Components
         {
             Title = searchItem.Query;
             Subtitle = $"{(searchItem.IsURL ? "Visit" : "Search")} as: {profilesOrdered[0].Name}";
+            
+            // slows UI down in latest update (cuz it's fixed now)
             TextToSuggest = searchItem.Query;
 
             // set icon to url or search
@@ -88,7 +90,7 @@ namespace GooglePal.Components
 
             Title = searchItem.Query;
             Subtitle = copySubtitle;
-            TextToSuggest = searchItem.Query;
+            TextToSuggest = copyText;
 
             Icon = CalculatorIcon;
 

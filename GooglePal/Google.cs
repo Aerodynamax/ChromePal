@@ -1,14 +1,13 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
-using static GooglePal.Google;
 
 namespace GooglePal
 {
@@ -33,9 +32,23 @@ namespace GooglePal
         private HttpClient client = new();
 
 
+        // cache suggestions to reduce requests
+        protected class CachedQuery
+        {
+            public required string Query;
+            public required List<Suggestion> Suggestions;
+        }
+        protected List<CachedQuery> CachedQueries = [];
+
+
+        // TODO: add details pane for results through: [ https://www.google.com/complete/search?q=chatgpt.c%20&client=gws-wiz-serp&callback=chromepal ]
         // [ https://github.com/Daydreamer-riri/CmdPal-WebSearchShortcut/blob/main/CmdPalWebSearchShortcut/WebSearchShortcut/SuggestionsProviders/Google.cs ]
         public virtual async Task<List<Suggestion>> GetSuggestionsAsync(string query, CancellationToken cancellationToken = default)
         {
+            // return from cached suggestions if available
+            CachedQuery? cached = CachedQueries.FirstOrDefault(item => item.Query == query);
+            if (cached != null) return cached.Suggestions;
+
             List<Suggestion> suggestions = [];
             string url = $"https://www.google.com/complete/search?output=chrome&q={HttpUtility.UrlEncode(query)}";
 
@@ -115,6 +128,22 @@ namespace GooglePal
 
             }
             catch (Exception ex) { Debug.WriteLine($"ERROR: {ex}"); }
+
+            // remove any null results
+            if ( suggestions.Any(t => t == null) )
+            {
+                Debug.WriteLine("IUNSDFINFDS");
+            }
+            suggestions.RemoveAll(item => item == null);
+            //suggestions = suggestions.Where(item => item != null).ToList();
+
+
+            // add to cache
+            CachedQueries.Add(new()
+            {
+                Query = query,
+                Suggestions = suggestions
+            });
 
             return suggestions;
         }

@@ -14,11 +14,6 @@ using static GooglePal.Google;
 
 namespace GooglePal;
 
-public class CachedItem
-{
-    public required string URL { get; set; }
-    public required bool IsWebsite {  get; set; }
-}
 
 internal sealed partial class GooglePalPage : DynamicListPage
 {
@@ -26,15 +21,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public List<Suggestion> Suggestions = [];
 
     public Chrome chrome = new();
-
-    // rate limiting
-    public int RatelimitTimeMS = 300;
-    public int OutOfDateLength = 3;
-
-
-    private string previousSearchQuery = "";
-
-    public List<CachedItem> CachedIsWebsite = new();
 
 
     // chrome profile
@@ -60,15 +46,10 @@ internal sealed partial class GooglePalPage : DynamicListPage
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
-        //List<Suggestion> previousSuggestions = Suggestions;
-
         // don't query if empty
         if (!string.IsNullOrEmpty(SearchText))
         {
-            await UpdateSuggestions(
-                previousSearchText: SearchText,
-                requireNoChangeTimeMS: 0
-            );
+            await UpdateSuggestions(query: SearchText);
 
             RaiseItemsChanged(Suggestions.Count);
         }
@@ -109,6 +90,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         // convert suggestions into list items and add to the queries list
         queries.AddRange(Suggestions.Select(CreateSearchListItem).Distinct());
+
+        // don't have text suggestions for the first option (makes typing laggy)
+        queries.FirstOrDefault()!.TextToSuggest = "";
 
         // show search options
         return queries.ToArray();
@@ -206,17 +190,11 @@ internal sealed partial class GooglePalPage : DynamicListPage
     }
 
 
-    public async Task UpdateSuggestions(string previousSearchText, int requireNoChangeTimeMS)
+    public async Task UpdateSuggestions(string query)
     {
-        await Task.Delay(requireNoChangeTimeMS);
-
-        // don't update suggestions if user has typed more
-        if (SearchText != previousSearchText) return;
-
-        previousSearchQuery = SearchText;
 
         // update suggestions
-        Suggestions = await chrome.GetSuggestionsAsync(SearchText.Trim());
+        Suggestions = await chrome.GetSuggestionsAsync(SearchText);
 
 
         // find relevant history
@@ -234,7 +212,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 SearchText.Trim() == item.Query.Trim().Substring(0, SearchText.Trim().Length)
             ).ToArray();
 
-            historyItems = historyItems.DistinctBy(historyItem => historyImportant.Contains(historyItem)).ToArray();
+            historyItems = historyItems.Where(historyItem => !historyImportant.Any(historyImp => historyItem.Query == historyImp.Query)).ToArray();
+
+            Debug.WriteLine(Suggestions.Count);
 
             // add relevant urls as suggestions above the user prompt
             // (if the user prompt still exists!)
@@ -245,9 +225,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
             if (historyImportant.Length > 0) Suggestions.InsertRange(0, historyImportant);
         }
-
-        // remove nulls that were causing errors
-        Suggestions.RemoveAll(suggestion => suggestion == null);
     }
 
 
