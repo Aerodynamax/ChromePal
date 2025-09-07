@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
@@ -126,24 +125,14 @@ namespace GooglePal
                     });
                 }
 
+                // add to cache (provided there aren't any errors)
+                CachedQueries.Add(new()
+                {
+                    Query = query,
+                    Suggestions = suggestions
+                });
             }
             catch (Exception ex) { Debug.WriteLine($"ERROR: {ex}"); }
-
-            // remove any null results
-            if ( suggestions.Any(t => t == null) )
-            {
-                Debug.WriteLine("IUNSDFINFDS");
-            }
-            suggestions.RemoveAll(item => item == null);
-            //suggestions = suggestions.Where(item => item != null).ToList();
-
-
-            // add to cache
-            CachedQueries.Add(new()
-            {
-                Query = query,
-                Suggestions = suggestions
-            });
 
             return suggestions;
         }
@@ -179,8 +168,8 @@ namespace GooglePal
             return new Suggestion()
             {
                 Query = query,
-                Type = (bool)isWebsite ? SuggestionType.Website : SuggestionType.Query,
-                IsURL = (bool)isWebsite
+                Type = isWebsite ? SuggestionType.Website : SuggestionType.Query,
+                IsURL = isWebsite
             };
         }
 

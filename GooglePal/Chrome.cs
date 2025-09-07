@@ -22,29 +22,22 @@ namespace GooglePal
             public required string ProfilePicturePath { get; set; }
         }
 
-
         // history
         private string HistoryConfigPath = Path.Combine(
             Path.GetDirectoryName(AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
             "history.json"
         );
-        private int HistoryLength = 999;
+        private int HistoryLength = -1;
 
-        public List<Suggestion> History;
-
-        public Chrome()
-        {
-            History = LoadHistory();
-        }
+        public List<Suggestion> History = [];
 
         public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
         {
+            // load history if first time
+            if (HistoryLength == -1) History = LoadHistory(eventArgs.HistoryLength);
+
             // update history length
             HistoryLength = eventArgs.HistoryLength;
-
-            // truncate history if required
-            if (History.Count > HistoryLength)
-                History = History.Skip(History.Count - HistoryLength).ToList();
 
             // save
             SaveHistory();
@@ -57,7 +50,8 @@ namespace GooglePal
             // change type to history if suggestion in history
             foreach (Suggestion suggestion in suggestions)
             {
-                if (History.Any(item => item.Query == suggestion.Query)) suggestion.Type = SuggestionType.History;
+                if (History.Any(item => item.Query == suggestion.Query))
+                    suggestion.Type = SuggestionType.History;
             }
 
             return suggestions;
@@ -171,9 +165,12 @@ namespace GooglePal
                     IsURL = true
                 };
 
-            // add to history
-            if (!History.Any(item => item.Query == historyItem.Query))
+            // add to history if not present & not new tab
+            if (url != "chrome://newtab")
             {
+                // bump to end of list
+                History.RemoveAll(item => item.Query == historyItem.Query);
+
                 History.Add(historyItem);
                 SaveHistory();
             }
@@ -183,7 +180,7 @@ namespace GooglePal
             {
                 FileName = chromeExe,
                 WindowStyle = ProcessWindowStyle.Normal,
-                Arguments = $"--start-maximised --profile-directory=\"{profile.Folder}\" {((newWindow == true) ? "--new-window" : "--new-tab")} \"{url}\"",
+                Arguments = $"--start-maximised --profile-directory=\"{profile.Folder}\" {((newWindow == true) ? "--new-window" : "--new-tab")} {(url == "chrome://newtab" ? "" : $"\"{url}\"")}",
                 UseShellExecute = true
             };
 
@@ -288,16 +285,29 @@ namespace GooglePal
         }
 
 
+        public void RemoveFromHistory(string query)
+        {
+            History.RemoveAll(historyItem => historyItem.Query == query);
+
+            // cache is no longer valid (pointers somthin somthin)
+            CachedQueries.Clear();
+
+            SaveHistory();
+        }
+
         public void SaveHistory()
         {
-            string jsonString = JsonConvert.SerializeObject(History, Formatting.Indented);
+            string jsonString = JsonConvert.SerializeObject(History.Take(HistoryLength), Formatting.Indented);
 
             Debug.WriteLine($"Saving to: {HistoryConfigPath}");
 
             File.WriteAllText(HistoryConfigPath, jsonString);
         }
 
-        public List<Suggestion> LoadHistory()
+
+        public List<Suggestion> LoadHistory() => LoadHistory(HistoryLength);
+
+        public List<Suggestion> LoadHistory(int maxLength)
         {
             try
             {
@@ -307,8 +317,11 @@ namespace GooglePal
 
                 List<Suggestion> history = JsonConvert.DeserializeObject<List<Suggestion>>(jsonString) ?? [];
 
-                // remove duplicates
-                history = history.Distinct().ToList();
+                // remove duplicates (and only take history length)
+                history = history
+                    .DistinctBy(item => item.Query)
+                    .Take(maxLength)
+                    .ToList();
 
                 // return history
                 return history;

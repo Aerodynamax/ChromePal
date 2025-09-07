@@ -3,6 +3,7 @@ using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -43,6 +44,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     public int LevenshteinMaxDistance = 3;
 
+
+
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
@@ -57,9 +60,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
 
     }
-
-    // icons
-    private static IconInfo SearchIcon = new IconInfo("\uE721");
 
     public GooglePalPage()
     {
@@ -78,7 +78,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public override IListItem[] GetItems()
     {
         // show generic text if no input available
-        if (string.IsNullOrEmpty(SearchText.Trim()))
+        if (string.IsNullOrEmpty(SearchText.Trim()) || Suggestions.Count < 1)
         {
             return [
                 CreateDefaultSearchListItem()
@@ -86,15 +86,17 @@ internal sealed partial class GooglePalPage : DynamicListPage
         }
 
         // format suggestions into command palette list items
-        List<ListItem> queries = [];
+        List<ListItem> queries = Suggestions.Select(CreateSearchListItem).ToList();
 
         // convert suggestions into list items and add to the queries list
-        queries.AddRange(Suggestions.Select(CreateSearchListItem).Distinct());
+        //queries.AddRange();
 
-        // don't have text suggestions for the first option (makes typing laggy)
-        queries.FirstOrDefault()!.TextToSuggest = "";
+        if (queries.Count < 1) return [];
 
-        // show search options
+        // remove text complete for the exact query
+        var firstItem = queries.FirstOrDefault(query => query.Icon != SearchItem.HistoryIcon || query.Title == SearchText);
+        if (firstItem != null) firstItem.TextToSuggest = "";
+
         return queries.ToArray();
     }
 
@@ -103,7 +105,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
         return new SearchItem(
             searchItem: searchItem,
             profilesOrdered: Profiles,
-            searchCommand: (string profileName) => {
+            searchCommand: (string profileName) =>
+            {
 
                 // change default
                 DefaultProfile = profileName;
@@ -122,71 +125,58 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
                 // save profiles
                 Chrome.SaveProfiles(Profiles, ProfileConfigPath);
-            }
+            },
+            otherSubcommands: (searchItem.Type != SuggestionType.History) ? [] : [
+                new(
+                    name: "Remove from history",
+                    title: "Remove from history",
+                    action: () => {
+                        chrome.RemoveFromHistory(searchItem.Query);
+
+                        UpdateSearchText(oldSearch: SearchText, newSearch: SearchText);
+                    },
+                    result: CommandResult.KeepOpen() // don't close Command Palette
+                )
+                {
+                    IsCritical = true,
+                    Icon = SearchItem.DeleteIcon,
+                    RequestedShortcut = KeyChordHelpers.FromModifiers(
+                        ctrl: true,
+                        vkey: (int)VirtualKey.Delete
+                    )
+                }
+            ]
         );
     }
 
     private ListItem CreateDefaultSearchListItem()
     {
-        // Create context menu items for each Chrome profile
-        var moreCommands = Profiles.Select(profile =>
-            new CommandContextItem(
-                name: $"Open Chrome ({profile.Name})",
-                title: $"Open Chrome as: {profile.Name}",
-                action: () => {
+        return new SearchItem(
+            searchItem: new() { Query = "chrome://newtab", IsURL = true, Type = SuggestionType.Website },
+            profilesOrdered: Profiles,
+            searchCommand: (string profileName) => {
 
-                    // change default
-                    DefaultProfile = profile.Name;
+                // change default
+                DefaultProfile = profileName;
 
-                    // move the default profile to the top
-                    Profiles = Profiles
-                        .OrderByDescending(_profile => _profile.Name == DefaultProfile)
-                        .ToList();
+                // move the default profile to the top
+                Profiles = Profiles
+                    .OrderByDescending(_profile => _profile.Name == DefaultProfile)
+                    .ToList();
 
-                    chrome.OpenUrlInChromeProfile(
-                        url: "chrome://newtab",
-                        profileName: profile.Name,
-                        newWindow: OpenInNewWindow
-                    );
+                // open chrome & allow UI to hide
+                chrome.OpenUrlInChromeProfile(
+                    url: "https://google.com",
+                    profileName: profileName,
+                    newWindow: OpenInNewWindow
+                );
 
-                    // save profiles
-                    Chrome.SaveProfiles(Profiles, ProfileConfigPath);
-                }
-            )
-            {
-                RequestedShortcut = KeyChordHelpers.FromModifiers(
-                    ctrl: true,
-                    vkey: (int)VirtualKey.Number1 + Profiles.IndexOf(profile)
-                ),
-                Icon = new IconInfo(profile.ProfilePicturePath)
-            }
-        ).ToArray();
-
-        // remove first
-        if (moreCommands.Length > 0) moreCommands = moreCommands.Skip(1).ToArray();
-
-        // make second profile ctrl+enter
-        if (moreCommands.Length > 0)
-            moreCommands[0].RequestedShortcut = KeyChordHelpers.FromModifiers(
-                    ctrl: true,
-                    vkey: (int)VirtualKey.Enter
-            );
-
-        // Create the main list item
-
-        ListItem listItem = new ListItem(
-            new AnonymousCommand(() => chrome.OpenUrlInChromeProfile(
-                        url: "chrome://newtab",
-                        profileName: DefaultProfile,
-                        newWindow: OpenInNewWindow
-                    ))
-            { Name = $"Open Chrome ({DefaultProfile})", Icon = SearchIcon }
-
-        )
-        { Title = "Search Google or type a URL", Subtitle = $"Open as: {DefaultProfile}", MoreCommands = moreCommands };
-
-
-        return listItem;
+                // save profiles
+                Chrome.SaveProfiles(Profiles, ProfileConfigPath);
+            },
+            suggestText: false,
+            verb: "Open Chrome"
+        );
     }
 
 
@@ -194,37 +184,40 @@ internal sealed partial class GooglePalPage : DynamicListPage
     {
 
         // update suggestions
-        Suggestions = await chrome.GetSuggestionsAsync(SearchText);
+        List<Suggestion> suggestions = await chrome.GetSuggestionsAsync(query);
 
 
         // find relevant history
-        Suggestion[] historyItems = RelevantFromHistory(SearchText);
+        Suggestion[] historyItems = RelevantFromHistory(query);
 
-
-        if (historyItems.Length > 0 && Suggestions.Count > 0)
+        if (historyItems.Length > 0 && suggestions.Count > 0)
         {   
             // remove history suggestions
-            Suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
+            suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
 
             // find exact matching URLs to place above user query
-            Suggestion[] historyImportant = historyItems.Where(item =>
-                item.IsURL == true &&
-                SearchText.Trim() == item.Query.Trim().Substring(0, SearchText.Trim().Length)
-            ).ToArray();
+            Suggestion[] historyImportant = historyItems
+                .Where(item =>
+                    item.IsURL == true &&
+                    query.Trim() == item.Query.Trim().Substring(0, query.Trim().Length)
+                    || query == item.Query
+                )
+                .OrderBy(item => query == item.Query)
+                .ToArray();
 
             historyItems = historyItems.Where(historyItem => !historyImportant.Any(historyImp => historyItem.Query == historyImp.Query)).ToArray();
 
-            Debug.WriteLine(Suggestions.Count);
-
             // add relevant urls as suggestions above the user prompt
             // (if the user prompt still exists!)
-            Suggestions.InsertRange(
-                index: (Suggestions.Count == 0) ? 0 : 1,
+            suggestions.InsertRange(
+                index: (suggestions.Count == 0) ? 0 : 1,
                 historyItems
             );
 
-            if (historyImportant.Length > 0) Suggestions.InsertRange(0, historyImportant);
+            if (historyImportant.Length > 0) suggestions.InsertRange(0, historyImportant);
         }
+
+        Suggestions = suggestions;
     }
 
 
@@ -255,7 +248,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 .ToArray();
         }
 
-        Google.Suggestion[] t = chrome.History
+        Suggestion[] t = chrome.History
             .Where(item => item.Query.Length >= query.Length)
             .Where(item => ComputeDistanceLevenshtein(
                 query,

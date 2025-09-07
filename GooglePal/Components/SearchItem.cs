@@ -1,13 +1,11 @@
-﻿using Microsoft.CommandPalette.Extensions.Toolkit;
+﻿using ABI.Microsoft.CommandPalette.Extensions;
+using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Web;
+using System.Windows.Input;
 using Windows.System;
-using Windows.System.Profile;
-using static GooglePal.Chrome;
 
 namespace GooglePal.Components
 {
@@ -19,37 +17,50 @@ namespace GooglePal.Components
         public static IconInfo VisitIcon = new IconInfo("\uE774");
         public static IconInfo HistoryIcon = new IconInfo("\uE81C");
         public static IconInfo CalculatorIcon = new IconInfo("\uE8EF");
+        public static IconInfo DeleteIcon = new IconInfo("\uE74D");
 
         private Action<string> SearchCommand;
 
-        public SearchItem(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, Action<string> searchCommand)
-        {
-            if (searchItem == null) throw new ArgumentNullException();
+        private string? Verb;
 
+
+        public SearchItem(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, Action<string> searchCommand, CommandContextItem[]? otherSubcommands = null)
+            : this(
+                  searchItem: searchItem,
+                  profilesOrdered: profilesOrdered,
+                  searchCommand: searchCommand,
+                  otherSubcommands: otherSubcommands,
+                  suggestText: true
+            )
+            { }
+
+        public SearchItem(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, Action<string> searchCommand, CommandContextItem[]? otherSubcommands = null, bool suggestText = true, string? verb = null)
+        {
+            Verb = verb;
             SearchCommand = searchCommand;
 
             switch (searchItem.Type)
             {
                 case Google.SuggestionType.Website:
-                    InitLink(searchItem: searchItem, profilesOrdered: profilesOrdered); break;
+                    InitLink(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands); break;
 
                 case Google.SuggestionType.Calculation:
-                    InitCalc(searchItem: searchItem, profilesOrdered: profilesOrdered); break;
+                    InitCalc(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands); break;
 
                 default:
-                    InitLink(searchItem: searchItem, profilesOrdered: profilesOrdered); break;
+                    InitLink(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands); break;
             }
-
-            if (searchItem.Type == Google.SuggestionType.Query) InitLink(searchItem, profilesOrdered);
         }
 
-        private void InitLink(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered)
+        private void InitLink(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, CommandContextItem[]? otherSubcommands = null)
         {
-            Title = searchItem.Query;
+            // set tilte (unless)
+            Title = !string.IsNullOrEmpty(Verb) ? Verb : searchItem.Query;
+
             Subtitle = $"{(searchItem.IsURL ? "Visit" : "Search")} as: {profilesOrdered[0].Name}";
-            
-            // slows UI down in latest update (cuz it's fixed now)
-            TextToSuggest = searchItem.Query;
+
+            // set suggestion text (unless custom "Open Chrome" button)
+            if (string.IsNullOrEmpty(Verb)) TextToSuggest = searchItem.Query;
 
             // set icon to url or search
             // or history (takes priority)
@@ -70,18 +81,21 @@ namespace GooglePal.Components
                 vkey: (int)VirtualKey.Enter
             );
 
+            // add user specified commands
+            if (otherSubcommands != null && otherSubcommands.Length > 0) moreCommands = moreCommands.Concat(otherSubcommands).ToArray();
+
             // add secondary commands
-           MoreCommands = moreCommands;
+            MoreCommands = moreCommands;
 
             // create main command
             Command = new AnonymousCommand(() => SearchCommand(profilesOrdered[0].Name))
             {
-                Name = $"{(searchItem.IsURL ? "Visit" : "Search")} ({profilesOrdered[0].Name})",
+                Name = $"{(!string.IsNullOrEmpty(Verb) ? Verb : (searchItem.IsURL ? "Visit" : "Search"))} ({profilesOrdered[0].Name})",
                 Icon = icon
             };
         }
 
-        private void InitCalc(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered)
+        private void InitCalc(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, CommandContextItem[]? otherSubcommands = null)
         {
             // remove "= " from result
             string copyText = searchItem.Query.TrimStart("= ".ToArray());
@@ -105,6 +119,9 @@ namespace GooglePal.Components
                 ctrl: true,
                 vkey: (int)VirtualKey.Enter
             );
+
+            // add user specified commands
+            if (otherSubcommands != null && otherSubcommands.Length > 0) moreCommands = moreCommands.Concat(otherSubcommands).ToArray();
 
             // add secondary commands
             MoreCommands = moreCommands;
