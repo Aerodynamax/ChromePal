@@ -3,6 +3,7 @@ using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -20,16 +21,9 @@ namespace GooglePal;
 internal sealed partial class GooglePalPage : DynamicListPage
 {
     // suggestions
-    public List<ListItem> Items = new List<ListItem>();
-    public List<Suggestion> Suggestions = [];
+    public SuggestionList Suggestions;
 
     public Chrome chrome = new();
-
-    public int waitForInputTime = 200;
-
-    private bool isTextSuggestUpdate = false;
-
-    private CancellationTokenSource TextSuggestCancel = new CancellationTokenSource();
 
     // chrome profile
     public string ProfileConfigPath = Path.Combine(
@@ -43,43 +37,20 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public bool OpenInNewWindow;
 
     // history
-
     public int LevenshteinMaxDistance = 3;
+
+    // defaults
+    private ListItem DefaultItem = new();
 
 
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
-        RaiseItemsChanged(Suggestions.Count);
-        // don't query if empty
-        if (!string.IsNullOrEmpty(newSearch))
-        {
-            await UpdateSuggestions(query: newSearch);
-            
+        // change main search text
+        Suggestions.Update(newSearch);
 
-            try
-            {
-                await Task.Delay(waitForInputTime, TextSuggestCancel.Token);
-
-                if (newSearch == SearchText && !isTextSuggestUpdate)
-                {
-                    isTextSuggestUpdate = true;
-                    RaiseItemsChanged(Suggestions.Count);
-
-                    isTextSuggestUpdate = false;
-                    if (!TextSuggestCancel.IsCancellationRequested) TextSuggestCancel.Cancel(throwOnFirstException: true);
-                }
-
-            }
-            catch
-            {
-                isTextSuggestUpdate = false;
-                //if (!TextSuggestCancel.IsCancellationRequested) TextSuggestCancel.Cancel(throwOnFirstException: true);
-            }
-        }
-        else RaiseItemsChanged();
-
-
+        // update suggestions
+        if (!string.IsNullOrEmpty(newSearch)) UpdateSuggestions(newSearch);
     }
 
     public GooglePalPage()
@@ -94,47 +65,22 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Profiles = Chrome.LoadProfiles(ProfileConfigPath);
 
         DefaultProfile = Profiles.FirstOrDefault()?.Name ?? "Last opened";
-    }
 
-    public override IListItem[] GetItems()
-    {
-        // show generic text & history if no input entered
-        if (string.IsNullOrEmpty(SearchText.Trim()) || Suggestions.Count < 1)
-        {
-            return [
-                CreateDefaultSearchListItem(),
+        // create default page item
+        DefaultItem = CreateDefaultSearchListItem();
+
+        // create page list
+        Suggestions = new(
+            createListItem: CreateSearchListItem,
+            updateUI: () => RaiseItemsChanged(totalItems: Suggestions?.Items.Count ?? 1),
+            createDefaultPage: () => [
+                DefaultItem,
                 ..chrome.History.TakeLast(5).Reverse().Select(CreateSearchListItem)
-            ];
-        }
-
-        // format suggestions into command palette list items
-        List<ListItem> queries = Suggestions.Select(CreateSearchListItem).ToList();
-
-        if (queries.Count < 1) return [];
-
-        // cancel any pre-existing text complete waiters
-        TextSuggestCancel.Cancel(throwOnFirstException: true);
-
-        // wait for thread to die and recreate
-        Thread.Yield();
-        TextSuggestCancel.Dispose();
-        TextSuggestCancel = new CancellationTokenSource();
-
-        if (!isTextSuggestUpdate)
-        {
-            // remove text complete for the exact query
-            var firstItem = queries.FirstOrDefault(query => query.Icon != SearchItem.HistoryIcon || query.Title == SearchText);
-            if (firstItem != null) firstItem.TextToSuggest = "";
-
-            // remove text complete for history if not long enough
-            foreach (var item in queries.TakeWhile(item => item.Icon == SearchItem.HistoryIcon))
-            {
-                if (firstItem?.Title.Length <= LevenshteinMaxDistance) item.TextToSuggest = "";
-            }
-        }
-
-        return queries.ToArray();
+            ]
+        );
     }
+
+    public override IListItem[] GetItems() => [.. Suggestions.Items];
 
     private ListItem CreateSearchListItem(Suggestion searchItem)
     {
@@ -203,7 +149,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
                 // open chrome & allow UI to hide
                 chrome.OpenUrlInChromeProfile(
-                    url: "https://google.com",
+                    url: "chrome://newtab",
                     profileName: profileName,
                     newWindow: OpenInNewWindow
                 );
@@ -226,37 +172,44 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // find relevant history
         Suggestion[] historyItems = RelevantFromHistory(query);
 
+        Suggestion[] historyImportant = [];
+
         if (historyItems.Length > 0 && suggestions.Count > 0)
         {
             // remove history suggestions
             suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
 
+
             // find exact matching URLs to place above user query
-            Suggestion[] historyImportant = historyItems
+            historyImportant = historyItems
                 .Where(item =>
                     item.IsURL == true &&
-                    query.Trim() == item.Query.Trim().Substring(0, query.Trim().Length)
-                    || query == item.Query
+                    startsWithLevenshtein(query, item.Query) == 0
                 )
-                .OrderBy(item => query == item.Query)
+                .OrderByDescending(item => startsWithLevenshtein(query, item.Query))
                 .ToArray();
 
-            historyItems = historyItems.Where(historyItem => !historyImportant.Any(historyImp => historyItem.Query == historyImp.Query)).ToArray();
+            // remove important items from regular & only take most similar
+            historyItems = historyItems
+                .ExceptBy(historyImportant.Select(item => item.Query), item => item.Query)
+                .OrderByDescending(item => startsWithLevenshtein(query, item.Query))
+                .Take(2)
+                .ToArray();
 
-            // add relevant urls as suggestions above the user prompt
-            // (if the user prompt still exists!)
+            // add less relevant urls as suggestions above the user prompt
             suggestions.InsertRange(
-                index: (suggestions.Count == 0) ? 0 : 1,
+                index: 0,
                 historyItems
             );
-
-            if (historyImportant.Length > 0) suggestions.InsertRange(0, historyImportant);
         }
 
-        Suggestions = suggestions;
+        // convert to ListItems & to suggestions
+        Suggestions.Update(
+            query: query,
+            above: historyImportant.Select(CreateSearchListItem).ToArray(),
+            below: suggestions.Select(CreateSearchListItem).ToArray()
+        );
     }
-
-    //public async Task UpdateSuggestion
 
     public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
     {
@@ -264,6 +217,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         // update history
         chrome.OnSettingsChanged(sender, eventArgs);
+
+        // update page to default
+        if (string.IsNullOrEmpty(SearchText)) UpdateSearchText("", "");
 
         Debug.WriteLine($"Settings updated: {eventArgs.HistoryLength}");
     }
@@ -287,19 +243,39 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         Suggestion[] t = chrome.History
             .Where(item => item.Query.Length >= query.Length)
-            .Where(item => ComputeDistanceLevenshtein(
+            .Where(item => startsWithLevenshtein(
                 query,
-                item.Query.Substring(0, query.Length)) < LevenshteinMaxDistance
+                item.Query) < LevenshteinMaxDistance
             )
-            .OrderBy(item => ComputeDistanceLevenshtein(
+            .OrderByDescending(item => startsWithLevenshtein(
                 query,
-                item.Query.Substring(0, query.Length)
+                item.Query
             ))
             .ToArray();
 
         return t;
     }
 
+
+    public static int startsWithLevenshtein(string a, string b)
+    {
+        // initialise
+        int dist = int.MaxValue;
+
+        // compare the first part of the two
+        if (a.Length > b.Length)
+            dist = ComputeDistanceLevenshtein(
+                b,
+                a.Substring(0, b.Length)
+            );
+        else
+            dist = ComputeDistanceLevenshtein(
+                a,
+                b.Substring(0, a.Length)
+            );
+
+        return dist;
+    }
 
     // https://www.dotnetperls.com/levenshtein
     static int ComputeDistanceLevenshtein(string s, string t)

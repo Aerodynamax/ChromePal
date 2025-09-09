@@ -61,17 +61,6 @@ namespace GooglePal
                 var suggestionQueries = json.RootElement.EnumerateArray().ElementAt(1);
                 var suggestionType = json.RootElement.EnumerateArray().ElementAt(4).GetProperty("google:suggesttype");
 
-                // add query as suggestion
-                bool queryIsUrl = IsValidURL(query);
-
-                suggestions.Add(
-                    new Suggestion()
-                    {
-                        Query = query,
-                        Type = queryIsUrl ? SuggestionType.Website : SuggestionType.Query,
-                        IsURL = queryIsUrl
-                    }
-                );
 
                 // format query strings
                 string[] queryTitles = [

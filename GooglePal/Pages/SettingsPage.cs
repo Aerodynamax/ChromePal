@@ -77,12 +77,12 @@ public class SettingsManager : JsonSettingsManager
         label: "History Length",
         description: "Set the max seach history length.",
         choices: [
-            new ChoiceSetSetting.Choice("None", "0"),
-            new ChoiceSetSetting.Choice("5",    "5"),
-            new ChoiceSetSetting.Choice("10",  "10"),
-            new ChoiceSetSetting.Choice("25",  "25"),
-            new ChoiceSetSetting.Choice("50",  "50"),
             new ChoiceSetSetting.Choice("Infinite",  "99999"),
+            new ChoiceSetSetting.Choice("50",  "50"),
+            new ChoiceSetSetting.Choice("25",  "25"),
+            new ChoiceSetSetting.Choice("10",  "10"),
+            new ChoiceSetSetting.Choice("5",    "5"),
+            new ChoiceSetSetting.Choice("None", "0"),
         ]
     );
     public int HistoryLength
