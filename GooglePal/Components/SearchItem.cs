@@ -23,6 +23,7 @@ namespace GooglePal.Components
 
         private string? Verb;
 
+        private bool SuggestText = true;
 
         public SearchItem(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, Action<string> searchCommand, CommandContextItem[]? otherSubcommands = null)
             : this(
@@ -38,6 +39,8 @@ namespace GooglePal.Components
         {
             Verb = verb;
             SearchCommand = searchCommand;
+
+            SuggestText = suggestText;
 
             switch (searchItem.Type)
             {
@@ -60,7 +63,7 @@ namespace GooglePal.Components
             Subtitle = $"{(searchItem.IsURL ? "Visit" : "Search")} as: {profilesOrdered[0].Name}";
 
             // set suggestion text (unless custom "Open Chrome" button)
-            if (string.IsNullOrEmpty(Verb)) TextToSuggest = searchItem.Query;
+            if (SuggestText) TextToSuggest = searchItem.Query;
 
             // set icon to url or search
             // or history (takes priority)

@@ -160,13 +160,15 @@ namespace GooglePal
             else
                 historyItem = new()
                 {
-                    Query = url,
+                    Query = url
+                            .Replace("http://", "")
+                            .Replace("https://", ""),
                     Type = SuggestionType.History,
                     IsURL = true
                 };
 
             // add to history if not present & not new tab
-            if (url != "chrome://newtab")
+            if (url != "chrome://newtab" && url != "google.com")
             {
                 // bump to end of list
                 History.RemoveAll(item => item.Query == historyItem.Query);

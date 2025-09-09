@@ -3,11 +3,12 @@ using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using Windows.System;
@@ -19,10 +20,16 @@ namespace GooglePal;
 internal sealed partial class GooglePalPage : DynamicListPage
 {
     // suggestions
+    public List<ListItem> Items = new List<ListItem>();
     public List<Suggestion> Suggestions = [];
 
     public Chrome chrome = new();
 
+    public int waitForInputTime = 200;
+
+    private bool isTextSuggestUpdate = false;
+
+    private CancellationTokenSource TextSuggestCancel = new CancellationTokenSource();
 
     // chrome profile
     public string ProfileConfigPath = Path.Combine(
@@ -36,27 +43,41 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public bool OpenInNewWindow;
 
     // history
-    public string HistoryConfigPath = Path.Combine(
-        Path.GetDirectoryName(System.AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
-        "history.json"
-    );
-    public int HistoryLength = 999;
 
     public int LevenshteinMaxDistance = 3;
-
 
 
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
+        RaiseItemsChanged(Suggestions.Count);
         // don't query if empty
-        if (!string.IsNullOrEmpty(SearchText))
+        if (!string.IsNullOrEmpty(newSearch))
         {
-            await UpdateSuggestions(query: SearchText);
+            await UpdateSuggestions(query: newSearch);
+            
 
-            RaiseItemsChanged(Suggestions.Count);
+            try
+            {
+                await Task.Delay(waitForInputTime, TextSuggestCancel.Token);
+
+                if (newSearch == SearchText && !isTextSuggestUpdate)
+                {
+                    isTextSuggestUpdate = true;
+                    RaiseItemsChanged(Suggestions.Count);
+
+                    isTextSuggestUpdate = false;
+                    if (!TextSuggestCancel.IsCancellationRequested) TextSuggestCancel.Cancel(throwOnFirstException: true);
+                }
+
+            }
+            catch
+            {
+                isTextSuggestUpdate = false;
+                //if (!TextSuggestCancel.IsCancellationRequested) TextSuggestCancel.Cancel(throwOnFirstException: true);
+            }
         }
-        else RaiseItemsChanged(1);
+        else RaiseItemsChanged();
 
 
     }
@@ -77,25 +98,40 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     public override IListItem[] GetItems()
     {
-        // show generic text if no input available
+        // show generic text & history if no input entered
         if (string.IsNullOrEmpty(SearchText.Trim()) || Suggestions.Count < 1)
         {
             return [
-                CreateDefaultSearchListItem()
+                CreateDefaultSearchListItem(),
+                ..chrome.History.TakeLast(5).Reverse().Select(CreateSearchListItem)
             ];
         }
 
         // format suggestions into command palette list items
         List<ListItem> queries = Suggestions.Select(CreateSearchListItem).ToList();
 
-        // convert suggestions into list items and add to the queries list
-        //queries.AddRange();
-
         if (queries.Count < 1) return [];
 
-        // remove text complete for the exact query
-        var firstItem = queries.FirstOrDefault(query => query.Icon != SearchItem.HistoryIcon || query.Title == SearchText);
-        if (firstItem != null) firstItem.TextToSuggest = "";
+        // cancel any pre-existing text complete waiters
+        TextSuggestCancel.Cancel(throwOnFirstException: true);
+
+        // wait for thread to die and recreate
+        Thread.Yield();
+        TextSuggestCancel.Dispose();
+        TextSuggestCancel = new CancellationTokenSource();
+
+        if (!isTextSuggestUpdate)
+        {
+            // remove text complete for the exact query
+            var firstItem = queries.FirstOrDefault(query => query.Icon != SearchItem.HistoryIcon || query.Title == SearchText);
+            if (firstItem != null) firstItem.TextToSuggest = "";
+
+            // remove text complete for history if not long enough
+            foreach (var item in queries.TakeWhile(item => item.Icon == SearchItem.HistoryIcon))
+            {
+                if (firstItem?.Title.Length <= LevenshteinMaxDistance) item.TextToSuggest = "";
+            }
+        }
 
         return queries.ToArray();
     }
@@ -154,7 +190,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
         return new SearchItem(
             searchItem: new() { Query = "chrome://newtab", IsURL = true, Type = SuggestionType.Website },
             profilesOrdered: Profiles,
-            searchCommand: (string profileName) => {
+            searchCommand: (string profileName) =>
+            {
 
                 // change default
                 DefaultProfile = profileName;
@@ -182,7 +219,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     public async Task UpdateSuggestions(string query)
     {
-
         // update suggestions
         List<Suggestion> suggestions = await chrome.GetSuggestionsAsync(query);
 
@@ -191,7 +227,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Suggestion[] historyItems = RelevantFromHistory(query);
 
         if (historyItems.Length > 0 && suggestions.Count > 0)
-        {   
+        {
             // remove history suggestions
             suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
 
@@ -220,6 +256,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Suggestions = suggestions;
     }
 
+    //public async Task UpdateSuggestion
 
     public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
     {
@@ -244,7 +281,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
             return chrome.History
                 .Where(item => item.Query.Length >= query.Length)               // only check history items longer than query
                 .Where(item => query == item.Query.Substring(0, query.Length))  // check if the first chars match exactly
-                //.OrderBy(item => ) // TODO: order by recency & search count
+                                                                                //.OrderBy(item => ) // TODO: order by recency & search count
                 .ToArray();
         }
 
