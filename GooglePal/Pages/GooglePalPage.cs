@@ -3,13 +3,10 @@ using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using Windows.System;
@@ -21,6 +18,8 @@ namespace GooglePal;
 internal sealed partial class GooglePalPage : DynamicListPage
 {
     // suggestions
+    public static int maxPageItems = 6;
+
     public SuggestionList Suggestions;
 
     public Chrome chrome = new();
@@ -37,11 +36,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public bool OpenInNewWindow;
 
     // history
-    public int LevenshteinMaxDistance = 3;
-
-    // defaults
-    private ListItem DefaultItem = new();
-
+    public static int LevenshteinMaxDistance = 3;
 
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
@@ -66,21 +61,19 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         DefaultProfile = Profiles.FirstOrDefault()?.Name ?? "Last opened";
 
-        // create default page item
-        DefaultItem = CreateDefaultSearchListItem();
-
         // create page list
         Suggestions = new(
+            length: maxPageItems,
             createListItem: CreateSearchListItem,
-            updateUI: () => RaiseItemsChanged(totalItems: Suggestions?.Items.Count ?? 1),
+            updateUI: () => RaiseItemsChanged(totalItems: Suggestions?.Items.Length ?? 1),
             createDefaultPage: () => [
-                DefaultItem,
+                CreateDefaultSearchListItem(),
                 ..chrome.History.TakeLast(5).Reverse().Select(CreateSearchListItem)
             ]
         );
     }
 
-    public override IListItem[] GetItems() => [.. Suggestions.Items];
+    public override IListItem[] GetItems() => Suggestions.Items;
 
     private ListItem CreateSearchListItem(Suggestion searchItem)
     {
@@ -172,7 +165,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // find relevant history
         Suggestion[] historyItems = RelevantFromHistory(query);
 
-        Suggestion[] historyImportant = [];
+        Suggestion? historyImportant = null;
 
         if (historyItems.Length > 0 && suggestions.Count > 0)
         {
@@ -184,19 +177,19 @@ internal sealed partial class GooglePalPage : DynamicListPage
             historyImportant = historyItems
                 .Where(item =>
                     item.IsURL == true &&
-                    startsWithLevenshtein(query, item.Query) == 0
+                    Levenshtein.startsWithLevenshtein(query, item.Query) == 0
                 )
-                .OrderByDescending(item => startsWithLevenshtein(query, item.Query))
-                .ToArray();
+                .OrderByDescending(item => Levenshtein.startsWithLevenshtein(query, item.Query))
+                .FirstOrDefault();
 
             // remove important items from regular & only take most similar
             historyItems = historyItems
-                .ExceptBy(historyImportant.Select(item => item.Query), item => item.Query)
-                .OrderByDescending(item => startsWithLevenshtein(query, item.Query))
+                .Where(item => item.Query != historyImportant?.Query)
+                .OrderByDescending(item => Levenshtein.startsWithLevenshtein(query, item.Query))
                 .Take(2)
                 .ToArray();
 
-            // add less relevant urls as suggestions above the user prompt
+            // add less relevant urls as suggestions
             suggestions.InsertRange(
                 index: 0,
                 historyItems
@@ -206,7 +199,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         // convert to ListItems & to suggestions
         Suggestions.Update(
             query: query,
-            above: historyImportant.Select(CreateSearchListItem).ToArray(),
+            above: historyImportant != null ? CreateSearchListItem(historyImportant) : null,
             below: suggestions.Select(CreateSearchListItem).ToArray()
         );
     }
@@ -243,11 +236,11 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         Suggestion[] t = chrome.History
             .Where(item => item.Query.Length >= query.Length)
-            .Where(item => startsWithLevenshtein(
+            .Where(item => Levenshtein.startsWithLevenshtein(
                 query,
                 item.Query) < LevenshteinMaxDistance
             )
-            .OrderByDescending(item => startsWithLevenshtein(
+            .OrderByDescending(item => Levenshtein.startsWithLevenshtein(
                 query,
                 item.Query
             ))
@@ -255,70 +248,5 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         return t;
     }
-
-
-    public static int startsWithLevenshtein(string a, string b)
-    {
-        // initialise
-        int dist = int.MaxValue;
-
-        // compare the first part of the two
-        if (a.Length > b.Length)
-            dist = ComputeDistanceLevenshtein(
-                b,
-                a.Substring(0, b.Length)
-            );
-        else
-            dist = ComputeDistanceLevenshtein(
-                a,
-                b.Substring(0, a.Length)
-            );
-
-        return dist;
-    }
-
-    // https://www.dotnetperls.com/levenshtein
-    static int ComputeDistanceLevenshtein(string s, string t)
-    {
-        int n = s.Length;
-        int m = t.Length;
-        int[,] d = new int[n + 1, m + 1];
-
-        // Verify arguments.
-        if (n == 0)
-        {
-            return m;
-        }
-
-        if (m == 0)
-        {
-            return n;
-        }
-
-        // Initialize arrays.
-        for (int i = 0; i <= n; d[i, 0] = i++)
-        {
-        }
-
-        for (int j = 0; j <= m; d[0, j] = j++)
-        {
-        }
-
-        // Begin looping.
-        for (int i = 1; i <= n; i++)
-        {
-            for (int j = 1; j <= m; j++)
-            {
-                // Compute cost.
-                int cost = (t[j - 1] == s[i - 1]) ? 0 : 1;
-                d[i, j] = Math.Min(
-                Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
-                d[i - 1, j - 1] + cost);
-            }
-        }
-        // Return cost.
-        return d[n, m];
-    }
-
 
 }

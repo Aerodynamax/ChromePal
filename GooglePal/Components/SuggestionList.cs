@@ -1,135 +1,177 @@
 ﻿using Microsoft.CommandPalette.Extensions.Toolkit;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
 using static GooglePal.Google;
 
 namespace GooglePal.Components
 {
-    internal class SuggestionList
+    partial class SuggestionList
     {
         // suggestions
-        public List<ListItem> Items = new();
+        public ListItem[] Items = new ListItem[6];
 
+        private int ItemsLength = 6;
 
-        private List<ListItem> Above = new();
-        private ListItem       Main  = new();
-        private List<ListItem> Below = new();
+        private string currQuery = string.Empty;
 
-        //private ListItem TopMost = new();
+        private ListItem Query = new();
 
-
+        // functions
         private Action UpdateUI;
 
         private Func<Suggestion, ListItem> CreateListItem;
 
-        private ActionReturn<List<ListItem>> CreateDefaultPage;
-
-        // cancel moving Above to top updates
-        private CancellationTokenSource CancelUpdate = new();
+        private ActionReturn<ListItem[]> CreateDefaultPage;
 
         // general delegate for actions that return a value
         public delegate TResult ActionReturn<TResult>();
 
-        public SuggestionList(Func<Suggestion, ListItem> createListItem, Action updateUI, ActionReturn<List<ListItem>> createDefaultPage)
+        public SuggestionList(int length, Func<Suggestion, ListItem> createListItem, Action updateUI, ActionReturn<ListItem[]> createDefaultPage)
         {
             UpdateUI = updateUI;
             CreateListItem = createListItem;
             CreateDefaultPage = createDefaultPage;
 
-            Main.Title = "Loading ...";
-
-            Items = [.. Above, Main, .. Below];
+            Items = new ListItem[length];
+            ItemsLength = length;
         }
 
         public void Update(string query)
         {
-            // cancel any pending text suggestion updates
-            CancelUpdate.Cancel();
-            CancelUpdate = new CancellationTokenSource();
+            currQuery = query;
 
             // show default page
             if (string.IsNullOrEmpty(query))
             {
-                var items = CreateDefaultPage.Invoke();
+                ListItem[] defaultItems = CreateDefaultPage.Invoke();
 
-                Items = items;
+                // truncate
+                if (defaultItems.Length > ItemsLength) defaultItems = defaultItems.Take(ItemsLength).ToArray();
+
+                // hard refresh
+                Items = defaultItems;
 
                 UpdateUI.Invoke();
 
                 return;
             }
 
-            // remove gittering
-            if (Above.Count > 0) Above[0].TextToSuggest = query;
+            // don't update if top result is query
+            if (Items.FirstOrDefault()?.Title == query) return;
 
-            Main.Title = query;
-            Main.TextToSuggest = query;
+            int queryPosition = 0;
 
-            // if Above is still equal keep on top
-            Items = [Main, .. Above, .. Below];
-
-            UpdateUI.Invoke();
+            // if the important suggestion is still valid, keep it
+            if (Items.FirstOrDefault()?.Title != Query.Title && 
+                Levenshtein.startsWithLevenshtein(query, Items.FirstOrDefault()?.Title ?? "") == 0
+                )
+            {
+                queryPosition = 1;
+            }
 
             // get other properties (setting Main directly hard refreshes the UI)
-            ListItem copyFrom = CreateListItem.Invoke(CreateSuggestion(query));
+            Query = CreateListItem.Invoke(CreateSuggestion(query));
 
-            Main.Icon = copyFrom.Icon;
-            Main.Subtitle = copyFrom.Subtitle;
-            Main.Command = copyFrom.Command;
-            Main.MoreCommands = copyFrom.MoreCommands;
+            // soft refesh to prevent biting
+            UpdateListItemSilent(index: queryPosition, newItem: Query);
+
+            // update the UI (in theory..)
+            UpdateUI.Invoke();
         }
 
-        public void Update(string query, ListItem[] above, ListItem[] below)
+        public void Update(string query, ListItem? above, ListItem[] below)
         {
-            // remove gittering
-            if (above.Length > 0) above[0].TextToSuggest = query;
+            if (string.IsNullOrEmpty(query)) return;
 
-            Above = above.ToList();
-            Below = below.ToList();
+            // only keep suggestions that will be rendered
+            if (below.Length > ItemsLength - 1) below = below.Take(ItemsLength - 1).ToArray();
 
-            Items = [Main, .. Above, .. Below];
 
-            UpdateUI.Invoke();
+            // add any missing indicies
+            while (Items.Length < ItemsLength)
+                Items = Items.Append(new()).ToArray();
 
-            if (Above.Count == 0) return;
+            int updatePosition = 1;
 
-            Task.Run(async () =>
+            // update suggestions
+            foreach (var suggestion in below.Index())
             {
-                ListItem[] preItems = new ListItem[Items.Count];
-                Items.CopyTo(0, preItems, 0, Items.Count);
+                // skip out of range
+                if (suggestion.Index >= ItemsLength - 1) continue;
 
-                // wait for no user input
-                await Task.Delay(500);
+                // speed through if out of date
+                if (query != currQuery)
+                    // too fast normally, causes biting
+                    Items[suggestion.Index + 1] = suggestion.Item;
 
-                // get the item whose text suggest was changed
-                ListItem? first = Above.FirstOrDefault(item => item.TextToSuggest == query);
+                // update text
+                UpdateListItemSilent(index: suggestion.Index + 1, newItem: suggestion.Item);
 
-                // if UI hasn't changed
-                if (first != null && Main.Title == query &&
-                    preItems.SequenceEqual(Items) &&
-                    preItems.SequenceEqual([Main, .. Above, .. Below])
-                    )
-                {
-                    // TODO: SWITCH TO CHANGING MAIN DIRECTLY TO FIX/REDUCE ANY OTHER JITTERING
-                    // i don't know why this works
-                    ListItem top = Items[0];
+                updatePosition = updatePosition + 2;
+            }
 
-                    Items.RemoveAt(0);
+            // remove any ListItems that wheren't updated
+            Items = Items.Take(updatePosition).ToArray();
 
-                    Items[0].TextToSuggest = Items[0].Title;
+            // add above as top result
+            if (above != null)
+            {
+                // add user query if not exact match
+                if (Query.Title != above.Title)
+                    below = below.Prepend(Query).ToArray();
 
-                    Items.Insert(1, top);
+                // add above to suggestions
+                below = below.Prepend(above).ToArray();
 
-                    Items = Items.DistinctBy(item => item.Title).ToList();
+                // truncate length
+                below = below.Take(ItemsLength).ToArray();
 
-                    UpdateUI.Invoke();
-                }
-            }, CancelUpdate.Token);
+                // return if not current
+                if (query != currQuery) return;
+
+                // hard refresh
+                Items = below;
+            }
+
+
+            // update suggestions
+            UpdateUI.Invoke();
+        }
+
+
+        /// <summary>
+        ///     Update an item in the list without hard changing it's properties.
+        ///     <br /><br />
+        ///     Updates done this way won't cause new text suggestions to display <br />
+        ///     or move the user from their ListItem (that is, their position will 
+        ///     update to wherever the box lands).
+        /// </summary>
+        /// <param name="index">The position of the item to be overwritten.</param>
+        /// <param name="newItem">The item that will replace the current one.</param>
+        private void UpdateListItemSilent(int index, ListItem newItem)
+        {
+            // return if invalid location
+            if (index > Items.Length - 1 || index < 0) return;
+
+            if (Items[index] == null)
+            {
+                Items[index] = newItem;
+                return;
+            }
+
+            // update properties individually
+            Items[index].Title = newItem.Title;
+            Items[index].Subtitle = newItem.Subtitle;
+            Items[index].TextToSuggest = newItem.TextToSuggest;
+            Items[index].Command = newItem.Command;
+            Items[index].MoreCommands = newItem.MoreCommands;
+            Items[index].Icon = newItem.Icon;
+            Items[index].Section = newItem.Section;
+            Items[index].Details = newItem.Details;
+            Items[index].Tags = newItem.Tags;
         }
     }
 }
