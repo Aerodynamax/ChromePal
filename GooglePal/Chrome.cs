@@ -132,7 +132,7 @@ namespace GooglePal
         /// <param name="url">The URL to open.</param>
         /// <param name="profileName">The display name of the profile.</param>
         /// <param name="newWindow">Whether to open a new window or a new tab.</param>
-        public void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false)
+        public void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false, bool addToHistory = true)
         {
             // invalidate cache as suggestions may change with browsing
             //CachedQueries.Clear();
@@ -168,7 +168,7 @@ namespace GooglePal
                 };
 
             // add to history if not present & not new tab
-            if (url != "chrome://newtab" && url != "google.com")
+            if (addToHistory)
             {
                 // bump to end of list
                 History.RemoveAll(item => item.Query == historyItem.Query);

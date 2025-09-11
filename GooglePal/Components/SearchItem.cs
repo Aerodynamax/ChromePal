@@ -18,6 +18,7 @@ namespace GooglePal.Components
         public static IconInfo HistoryIcon = new IconInfo("\uE81C");
         public static IconInfo CalculatorIcon = new IconInfo("\uE8EF");
         public static IconInfo DeleteIcon = new IconInfo("\uE74D");
+        public static IconInfo CopyIcon = new IconInfo("\uE8C8");
 
         private Action<string> SearchCommand;
 
@@ -84,11 +85,9 @@ namespace GooglePal.Components
                 vkey: (int)VirtualKey.Enter
             );
 
-            // add user specified commands
-            if (otherSubcommands != null && otherSubcommands.Length > 0) moreCommands = moreCommands.Concat(otherSubcommands).ToArray();
 
-            // add secondary commands
-            MoreCommands = moreCommands;
+            // add secondary & provided commands
+            MoreCommands = [.. moreCommands, .. otherSubcommands ?? []];
 
             // create main command
             Command = new AnonymousCommand(() => SearchCommand(profilesOrdered[0].Name))

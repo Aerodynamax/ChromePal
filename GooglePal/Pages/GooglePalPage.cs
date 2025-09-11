@@ -79,6 +79,50 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     private ListItem CreateSearchListItem(Suggestion searchItem)
     {
+        List<CommandContextItem> otherCommands = [];
+
+        // add "Copy to clipboard"
+        if (searchItem.Type != SuggestionType.Calculation)
+            otherCommands.Add(new(
+                    name: $"Copy \"{searchItem.Query}\" to clipboard",
+                    title: $"Copy \"{searchItem.Query}\" to clipboard",
+                    action: () =>
+                    {
+                        // set clipboard to query
+                        ClipboardHelper.SetText(searchItem.Query);
+                    },
+                    result: CommandResult.ShowToast(new ToastArgs() { Message = "Copied to clipboard", Result = CommandResult.KeepOpen() })
+                )
+            {
+                Icon = SearchItem.CopyIcon,
+                RequestedShortcut = KeyChordHelpers.FromModifiers(
+                        ctrl: true,
+                        vkey: (int)VirtualKey.C
+                    )
+            });
+
+        // add "Remove from history"
+        if (searchItem.Type == SuggestionType.History)
+            otherCommands.Add(new(
+                    name: "Remove from history",
+                    title: "Remove from history",
+                    action: () =>
+                    {
+                        chrome.RemoveFromHistory(searchItem.Query);
+
+                        UpdateSearchText(oldSearch: SearchText, newSearch: SearchText);
+                    },
+                    result: CommandResult.KeepOpen() // don't close Command Palette
+                )
+            {
+                IsCritical = true,
+                Icon = SearchItem.DeleteIcon,
+                RequestedShortcut = KeyChordHelpers.FromModifiers(
+                        ctrl: true,
+                        vkey: (int)VirtualKey.Delete
+                    )
+            });
+
         return new SearchItem(
             searchItem: searchItem,
             profilesOrdered: Profiles,
@@ -96,7 +140,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 Task.Run(() => chrome.OpenUrlInChromeProfile(
                     url: searchItem.IsURL ? searchItem.Query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(searchItem.Query)}",
                     profileName: profileName,
-                    newWindow: OpenInNewWindow
+                    newWindow: OpenInNewWindow,
+                    addToHistory: searchItem.Type != SuggestionType.Calculation
                 ));
 
                 // reset page
@@ -105,26 +150,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 // save profiles
                 Chrome.SaveProfiles(Profiles, ProfileConfigPath);
             },
-            otherSubcommands: (searchItem.Type != SuggestionType.History) ? [] : [
-                new(
-                    name: "Remove from history",
-                    title: "Remove from history",
-                    action: () => {
-                        chrome.RemoveFromHistory(searchItem.Query);
-
-                        UpdateSearchText(oldSearch: SearchText, newSearch: SearchText);
-                    },
-                    result: CommandResult.KeepOpen() // don't close Command Palette
-                )
-                {
-                    IsCritical = true,
-                    Icon = SearchItem.DeleteIcon,
-                    RequestedShortcut = KeyChordHelpers.FromModifiers(
-                        ctrl: true,
-                        vkey: (int)VirtualKey.Delete
-                    )
-                }
-            ]
+            otherSubcommands: otherCommands.ToArray()
         );
     }
 
@@ -148,7 +174,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
                 chrome.OpenUrlInChromeProfile(
                     url: "chrome://newtab",
                     profileName: profileName,
-                    newWindow: OpenInNewWindow
+                    newWindow: OpenInNewWindow,
+                    addToHistory: false
                 );
 
                 // reset page
@@ -220,7 +247,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
     {
         OpenInNewWindow = eventArgs.OpenInNewBrowser;
-        ShowLoading     = eventArgs.ShowLoading;
+        ShowLoading = eventArgs.ShowLoading;
 
         // suggestions + query
         MaxPageItems = eventArgs.SuggestionLength + 1;
