@@ -12,11 +12,15 @@ public class SettingsChangedEventArgs : EventArgs
 {
     public bool OpenInNewBrowser { get; }
     public int HistoryLength { get; }
+    public int SuggestionLength { get; }
+    public bool ShowLoading { get; }
 
-    public SettingsChangedEventArgs(bool openInNewBrowser, int historyLength)
+    public SettingsChangedEventArgs(bool openInNewBrowser, int historyLength, int suggestionLength, bool showLoading)
     {
         OpenInNewBrowser = openInNewBrowser;
+        SuggestionLength = suggestionLength;
         HistoryLength = historyLength;
+        ShowLoading = showLoading;
     }
 }
 
@@ -30,13 +34,25 @@ public class SettingsManager : JsonSettingsManager
 
     private static string Namespaced(string propertyName) => $"{_namespace}.{propertyName}";
 
+
+    // open in new browser
     private readonly ToggleSetting _OpenInNewBrowser = new(
-        key: nameof(OpenInNewBrowser),
+        key: Namespaced(nameof(OpenInNewBrowser)),
         label: "Open in new browser",
-        description: "Open queries in new browser.",
+        description: "Open queries in a new browser window.",
         defaultValue: false
     );
     public bool OpenInNewBrowser => _OpenInNewBrowser.Value;
+
+
+    // open in new browser
+    private readonly ToggleSetting _ShowLoading = new(
+        key: Namespaced(nameof(ShowLoading)),
+        label: "Show loading indicator",
+        description: "Enable/Disable the blue continuous loading indicator.",
+        defaultValue: true
+    );
+    public bool ShowLoading => _ShowLoading.Value;
 
 
     // TODO: add static profile options
@@ -71,10 +87,37 @@ public class SettingsManager : JsonSettingsManager
     }
 
 
+    // page suggestion amount
+    private readonly ChoiceSetSetting _SuggestionLength = new(
+        key: Namespaced(nameof(SuggestionLength)),
+        label: "Max suggestion count",
+        description: "Set the max number of suggestions that can appear in search (not including exact search).",
+        choices: [
+            new ChoiceSetSetting.Choice("20",  "20"),
+            new ChoiceSetSetting.Choice("10",  "10"),
+            new ChoiceSetSetting.Choice("5",   "5"),
+            new ChoiceSetSetting.Choice("3",   "3"),
+            new ChoiceSetSetting.Choice("None", "0"),
+        ]
+    );
+    public int SuggestionLength
+    {
+        get
+        {
+            if (int.TryParse(_SuggestionLength.Value, out var result))
+            {
+                return result;
+            }
+            // default
+            return 5;
+        }
+    }
 
+
+    // history length
     private readonly ChoiceSetSetting _HistoryLength = new(
         key: Namespaced(nameof(HistoryLength)),
-        label: "History Length",
+        label: "Max history length",
         description: "Set the max seach history length.",
         choices: [
             new ChoiceSetSetting.Choice("Infinite",  "99999"),
@@ -103,14 +146,16 @@ public class SettingsManager : JsonSettingsManager
     {
         FilePath = SettingsJsonPath();
 
-        Settings.Add(_OpenInNewBrowser);
+        Settings.Add(_SuggestionLength);
         Settings.Add(_HistoryLength);
+        Settings.Add(_ShowLoading);
+        Settings.Add(_OpenInNewBrowser);
 
         LoadSettings();
 
         Settings.SettingsChanged += (s, a) =>
         {
-            OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength));
+            OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading));
             
             SaveSettings();
         };
@@ -127,6 +172,6 @@ public class SettingsManager : JsonSettingsManager
     // send history update (used in initialisation)
     public void SendSavedUpdateEvent()
     {
-        OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength));
+        OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading));
     }
 }

@@ -18,11 +18,13 @@ namespace GooglePal;
 internal sealed partial class GooglePalPage : DynamicListPage
 {
     // suggestions
-    public static int maxPageItems = 6;
+    public int MaxPageItems = 6;
 
     public SuggestionList Suggestions;
 
     public Chrome chrome = new();
+
+    public bool ShowLoading = true;
 
     // chrome profile
     public string ProfileConfigPath = Path.Combine(
@@ -42,10 +44,10 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
         // change main search text
-        Suggestions.Update(newSearch);
+        Suggestions.UpdateQuery(newSearch);
 
         // update suggestions
-        if (!string.IsNullOrEmpty(newSearch)) UpdateSuggestions(newSearch);
+        if (!string.IsNullOrEmpty(newSearch) && MaxPageItems > 1) UpdateSuggestions(newSearch);
     }
 
     public GooglePalPage()
@@ -63,7 +65,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         // create page list
         Suggestions = new(
-            length: maxPageItems,
+            length: MaxPageItems,
             createListItem: CreateSearchListItem,
             updateUI: () => RaiseItemsChanged(totalItems: Suggestions?.Items.Length ?? 1),
             createDefaultPage: () => [
@@ -82,7 +84,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
             profilesOrdered: Profiles,
             searchCommand: (string profileName) =>
             {
-
                 // change default
                 DefaultProfile = profileName;
 
@@ -97,6 +98,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
                     profileName: profileName,
                     newWindow: OpenInNewWindow
                 ));
+
+                // reset page
+                Suggestions.UpdateQuery("");
 
                 // save profiles
                 Chrome.SaveProfiles(Profiles, ProfileConfigPath);
@@ -147,6 +151,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
                     newWindow: OpenInNewWindow
                 );
 
+                // reset page
+                Suggestions.UpdateQuery("");
+
                 // save profiles
                 Chrome.SaveProfiles(Profiles, ProfileConfigPath);
             },
@@ -158,6 +165,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     public async Task UpdateSuggestions(string query)
     {
+        // loading indicator
+        if (!IsLoading && ShowLoading) IsLoading = true;
+
         // update suggestions
         List<Suggestion> suggestions = await chrome.GetSuggestionsAsync(query);
 
@@ -197,16 +207,26 @@ internal sealed partial class GooglePalPage : DynamicListPage
         }
 
         // convert to ListItems & to suggestions
-        Suggestions.Update(
+        Suggestions.UpdateSuggestions(
             query: query,
             above: historyImportant != null ? CreateSearchListItem(historyImportant) : null,
             below: suggestions.Select(CreateSearchListItem).ToArray()
         );
+
+        // loading indicator
+        if (query == SearchText && ShowLoading) IsLoading = false;
     }
 
     public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
     {
         OpenInNewWindow = eventArgs.OpenInNewBrowser;
+        ShowLoading     = eventArgs.ShowLoading;
+
+        // suggestions + query
+        MaxPageItems = eventArgs.SuggestionLength + 1;
+
+        Suggestions.UpdateLength(MaxPageItems);
+
 
         // update history
         chrome.OnSettingsChanged(sender, eventArgs);

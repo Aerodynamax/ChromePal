@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
+using Windows.Devices.Sms;
 using static GooglePal.Google;
 
 namespace GooglePal.Components
@@ -18,6 +19,9 @@ namespace GooglePal.Components
         private string currQuery = string.Empty;
 
         private ListItem Query = new();
+
+        private ListItem[] QueryResults = [];
+        private ListItem? QueryAbove    = new();
 
         // functions
         private Action UpdateUI;
@@ -38,8 +42,15 @@ namespace GooglePal.Components
             Items = new ListItem[length];
             ItemsLength = length;
         }
+        public void UpdateLength(int length)
+        {
+            ItemsLength = length;
 
-        public void Update(string query)
+            // refresh UI
+            UpdateSuggestions(query: currQuery, above: QueryAbove, below: QueryResults);
+        }
+
+        public void UpdateQuery(string query)
         {
             currQuery = query;
 
@@ -66,6 +77,7 @@ namespace GooglePal.Components
 
             // if the important suggestion is still valid, keep it
             if (Items.FirstOrDefault()?.Title != Query.Title && 
+                ( Items.FirstOrDefault()?.Title.Length > Query.Title.Length) &&
                 Levenshtein.startsWithLevenshtein(query, Items.FirstOrDefault()?.Title ?? "") == 0
                 )
             {
@@ -82,42 +94,48 @@ namespace GooglePal.Components
             UpdateUI.Invoke();
         }
 
-        public void Update(string query, ListItem? above, ListItem[] below)
+        public void UpdateSuggestions(string query, ListItem? above, ListItem[] below)
         {
             if (string.IsNullOrEmpty(query)) return;
+
+            // store (in case of refreshes)
+            QueryResults = below;
+            QueryAbove = above;
 
             // only keep suggestions that will be rendered
             if (below.Length > ItemsLength - 1) below = below.Take(ItemsLength - 1).ToArray();
 
-
-            // add any missing indicies
-            while (Items.Length < ItemsLength)
-                Items = Items.Append(new()).ToArray();
-
-            int updatePosition = 1;
+            // reset items list length
+            Items = [.. Items, .. new ListItem[ItemsLength - Items.Length] ];
 
             // update suggestions
             foreach (var suggestion in below.Index())
             {
                 // skip out of range
-                if (suggestion.Index >= ItemsLength - 1) continue;
+                if (suggestion.Index > Items.Length - 2) continue;
 
                 // speed through if out of date
-                if (query != currQuery)
+                if (query != currQuery || suggestion.Index > 2)
+                {
                     // too fast normally, causes biting
                     Items[suggestion.Index + 1] = suggestion.Item;
+                    continue;
+                }
 
                 // update text
                 UpdateListItemSilent(index: suggestion.Index + 1, newItem: suggestion.Item);
-
-                updatePosition = updatePosition + 2;
             }
 
-            // remove any ListItems that wheren't updated
-            Items = Items.Take(updatePosition).ToArray();
-
-            // add above as top result
+            // remove non items
             if (above != null)
+                Items = Items.Take(below.Length + 2).ToArray();
+            else
+                Items = Items.Take(below.Length + 1).ToArray();
+            
+            //Items = Items.Where(item => item != null).ToArray();
+
+            // add above as top result if we're doing that
+            if (above != null && ItemsLength > 1 && query == currQuery)
             {
                 // add user query if not exact match
                 if (Query.Title != above.Title)
@@ -134,8 +152,8 @@ namespace GooglePal.Components
 
                 // hard refresh
                 Items = below;
-            }
 
+            }
 
             // update suggestions
             UpdateUI.Invoke();
@@ -157,10 +175,7 @@ namespace GooglePal.Components
             if (index > Items.Length - 1 || index < 0) return;
 
             if (Items[index] == null)
-            {
-                Items[index] = newItem;
-                return;
-            }
+                Items[index] = new();
 
             // update properties individually
             Items[index].Title = newItem.Title;

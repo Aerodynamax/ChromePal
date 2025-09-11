@@ -1,6 +1,8 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
@@ -30,7 +32,6 @@ namespace GooglePal
 
         private HttpClient client = new();
 
-
         // cache suggestions to reduce requests
         protected class CachedQuery
         {
@@ -53,10 +54,10 @@ namespace GooglePal
 
             try
             {
-                await using var response = await client.GetStreamAsync(url, cancellationToken);
+                HttpContent response = client.GetAsync(url, cancellationToken).Result.Content;
 
-                // deserialise
-                var json = await JsonDocument.ParseAsync(response, cancellationToken: cancellationToken);
+                // deserialise (ParseAsync errored on non utf-8)
+                var json = JsonDocument.Parse(response.ReadAsStringAsync(cancellationToken).Result);
 
                 var suggestionQueries = json.RootElement.EnumerateArray().ElementAt(1);
                 var suggestionType = json.RootElement.EnumerateArray().ElementAt(4).GetProperty("google:suggesttype");
