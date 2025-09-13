@@ -47,7 +47,10 @@ internal sealed partial class GooglePalPage : DynamicListPage
         Suggestions.UpdateQuery(newSearch);
 
         // update suggestions
-        if (!string.IsNullOrEmpty(newSearch) && MaxPageItems > 1) UpdateSuggestions(newSearch);
+        if (!string.IsNullOrEmpty(newSearch) && MaxPageItems > 1) await UpdateSuggestions(newSearch);
+
+        // stop loading
+        if (string.IsNullOrEmpty(newSearch) && IsLoading) IsLoading = false;
     }
 
     public GooglePalPage()
@@ -141,7 +144,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
                     url: searchItem.IsURL ? searchItem.Query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(searchItem.Query)}",
                     profileName: profileName,
                     newWindow: OpenInNewWindow,
-                    addToHistory: searchItem.Type != SuggestionType.Calculation
+                    addToHistory: (searchItem.Type <= SuggestionType.History) // Query / Website / History
                 ));
 
                 // reset page

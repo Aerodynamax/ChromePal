@@ -22,6 +22,15 @@ namespace GooglePal
             public required string ProfilePicturePath { get; set; }
         }
 
+        // json
+        JsonSerializerSettings JsonOptions = new JsonSerializerSettings
+        {
+            NullValueHandling = NullValueHandling.Ignore,
+            Formatting = Formatting.Indented,
+            TypeNameHandling = TypeNameHandling.None,
+            DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate
+        };
+
         // history
         private string HistoryConfigPath = Path.Combine(
             Path.GetDirectoryName(AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
@@ -31,8 +40,20 @@ namespace GooglePal
 
         public List<Suggestion> History = [];
 
+        // suggestions
+        bool IncludeKnowledgePanels = true;
+        bool KnowledgePanelImages;
+
         public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
         {
+            //  // invalidate cache if required
+            //  if (eventArgs.IncludeKnowlegdePanels != IncludeKnowledgePanels)
+            //      CachedQueries.Clear();
+
+            // settings
+            IncludeKnowledgePanels = eventArgs.IncludeKnowlegdePanels;
+            KnowledgePanelImages = eventArgs.KnowlegdePanelImages;
+
             // load history if first time
             if (HistoryLength == -1) History = LoadHistory(eventArgs.HistoryLength);
 
@@ -45,13 +66,26 @@ namespace GooglePal
 
         public override async Task<List<Suggestion>> GetSuggestionsAsync(string query, CancellationToken cancellationToken = default)
         {
-            List<Suggestion> suggestions = await base.GetSuggestionsAsync(query, cancellationToken);
+            List<Suggestion> suggestions = await base.GetSuggestionsAsync(
+                query: query,
+                cancellationToken: cancellationToken
+            );
 
-            // change type to history if suggestion in history
+            // process suggestions
             foreach (Suggestion suggestion in suggestions)
-            {
-                if (History.Any(item => item.Query == suggestion.Query))
-                    suggestion.Type = SuggestionType.History;
+                {
+                    // change type to history if suggestion in history
+                    if (History.Any(item => item.Query == suggestion.Query))
+                        suggestion.Type = SuggestionType.History;
+
+                // remove knowledge panels if not required
+                // (since the request still needs to happen for definitions, this doesn't needlessly send requests)
+                if (!IncludeKnowledgePanels && suggestion.Type == SuggestionType.KnowledgePanel)
+                    suggestion.Type = SuggestionType.Query;
+
+                // remove icons from knowledge panels if not required
+                if (!KnowledgePanelImages && suggestion.Type == SuggestionType.KnowledgePanel)
+                        suggestion.Icon = null;
             }
 
             return suggestions;
@@ -299,7 +333,7 @@ namespace GooglePal
 
         public void SaveHistory()
         {
-            string jsonString = JsonConvert.SerializeObject(History.Take(HistoryLength), Formatting.Indented);
+            string jsonString = JsonConvert.SerializeObject(value: History.Take(HistoryLength), settings: JsonOptions);
 
             Debug.WriteLine($"Saving to: {HistoryConfigPath}");
 
@@ -317,7 +351,7 @@ namespace GooglePal
 
                 string jsonString = File.ReadAllText(HistoryConfigPath);
 
-                List<Suggestion> history = JsonConvert.DeserializeObject<List<Suggestion>>(jsonString) ?? [];
+                List<Suggestion> history = JsonConvert.DeserializeObject<List<Suggestion>>(jsonString, settings: JsonOptions) ?? [];
 
                 // remove duplicates (and only take history length)
                 history = history

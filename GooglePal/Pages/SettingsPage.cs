@@ -14,13 +14,17 @@ public class SettingsChangedEventArgs : EventArgs
     public int HistoryLength { get; }
     public int SuggestionLength { get; }
     public bool ShowLoading { get; }
+    public bool IncludeKnowlegdePanels { get; }
+    public bool KnowlegdePanelImages { get; }
 
-    public SettingsChangedEventArgs(bool openInNewBrowser, int historyLength, int suggestionLength, bool showLoading)
+    public SettingsChangedEventArgs(bool openInNewBrowser, int historyLength, int suggestionLength, bool showLoading, bool knowlegePanels, bool knowlegeImages)
     {
         OpenInNewBrowser = openInNewBrowser;
         SuggestionLength = suggestionLength;
         HistoryLength = historyLength;
         ShowLoading = showLoading;
+        IncludeKnowlegdePanels = knowlegePanels;
+        KnowlegdePanelImages = knowlegeImages;
     }
 }
 
@@ -45,7 +49,7 @@ public class SettingsManager : JsonSettingsManager
     public bool OpenInNewBrowser => _OpenInNewBrowser.Value;
 
 
-    // open in new browser
+    // show loading indicator
     private readonly ToggleSetting _ShowLoading = new(
         key: Namespaced(nameof(ShowLoading)),
         label: "Show loading indicator",
@@ -53,6 +57,25 @@ public class SettingsManager : JsonSettingsManager
         defaultValue: true
     );
     public bool ShowLoading => _ShowLoading.Value;
+
+
+    // show knowledge panels
+    private readonly ToggleSetting _IncludeKnowledgePanels = new(
+        key: Namespaced(nameof(IncludeKnowledgePanels)),
+        label: "Include Knowledge Panel suggestions",
+        description: "Enable/Disable Google Knowledge Panels that display short desciptions of relevant topics.",
+        defaultValue: true
+    );
+    public bool IncludeKnowledgePanels => _IncludeKnowledgePanels.Value;
+
+    // show knowledge panel images
+    private readonly ToggleSetting _KnowledgePanelImages = new(
+        key: Namespaced(nameof(KnowledgePanelImages)),
+        label: "Include images in Knowledge Panel suggestions",
+        description: "Enable/Disable image icons for Google Knowledge Panel suggestions.",
+        defaultValue: false
+    );
+    public bool KnowledgePanelImages => _KnowledgePanelImages.Value;
 
 
     // TODO: add static profile options
@@ -93,6 +116,7 @@ public class SettingsManager : JsonSettingsManager
         label: "Max suggestion count",
         description: "Set the max number of suggestions that can appear in search (not including exact search).",
         choices: [
+            new ChoiceSetSetting.Choice("All",  "999"),
             new ChoiceSetSetting.Choice("20",  "20"),
             new ChoiceSetSetting.Choice("10",  "10"),
             new ChoiceSetSetting.Choice("5",   "5"),
@@ -147,15 +171,22 @@ public class SettingsManager : JsonSettingsManager
         FilePath = SettingsJsonPath();
 
         Settings.Add(_SuggestionLength);
+
+        Settings.Add(_IncludeKnowledgePanels);
+        Settings.Add(_KnowledgePanelImages);
+        
         Settings.Add(_HistoryLength);
+        
         Settings.Add(_ShowLoading);
+        
         Settings.Add(_OpenInNewBrowser);
+
 
         LoadSettings();
 
         Settings.SettingsChanged += (s, a) =>
         {
-            OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading));
+            OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
             
             SaveSettings();
         };
@@ -172,6 +203,6 @@ public class SettingsManager : JsonSettingsManager
     // send history update (used in initialisation)
     public void SendSavedUpdateEvent()
     {
-        OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading));
+        OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
     }
 }

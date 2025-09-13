@@ -1,5 +1,6 @@
 ﻿using ABI.Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -19,6 +20,8 @@ namespace GooglePal.Components
         public static IconInfo CalculatorIcon = new IconInfo("\uE8EF");
         public static IconInfo DeleteIcon = new IconInfo("\uE74D");
         public static IconInfo CopyIcon = new IconInfo("\uE8C8");
+        public static IconInfo DefinitionIcon = new IconInfo("\uE82D");
+        public static IconInfo KnowledgeIcon = new IconInfo("\uE946");
 
         private Action<string> SearchCommand;
 
@@ -47,6 +50,12 @@ namespace GooglePal.Components
             {
                 case Google.SuggestionType.Website:
                     InitLink(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands); break;
+
+                case Google.SuggestionType.Definition:
+                    InitDefine(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands); break;
+
+                case Google.SuggestionType.KnowledgePanel:
+                    InitSpecial(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands); break;
 
                 case Google.SuggestionType.Calculation:
                     InitCalc(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands); break;
@@ -95,6 +104,37 @@ namespace GooglePal.Components
                 Name = $"{(!string.IsNullOrEmpty(Verb) ? Verb : (searchItem.IsURL ? "Visit" : "Search"))} ({profilesOrdered[0].Name})",
                 Icon = icon
             };
+        }
+
+        private void InitDefine(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, CommandContextItem[]? otherSubcommands = null)
+        {
+            // based off query
+            InitLink(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands);
+
+            Title = searchItem.Title ?? searchItem.Query;
+            Subtitle = $"{(searchItem.IsURL ? "Visit" : "Search")} as: {profilesOrdered[0].Name} • {searchItem.Description}";
+            TextToSuggest = searchItem.Query;
+            Icon = DefinitionIcon;
+
+        }
+
+        private void InitSpecial(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, CommandContextItem[]? otherSubcommands = null)
+        {
+            // based off query
+            InitLink(searchItem: searchItem, profilesOrdered: profilesOrdered, otherSubcommands: otherSubcommands);
+
+
+            Title = searchItem.Title ?? searchItem.Query;
+
+            // add description if present
+            if (!string.IsNullOrEmpty(searchItem.Description))
+                Subtitle = $"{(searchItem.IsURL ? "Visit" : "Search")} as: {profilesOrdered[0].Name} - {searchItem.Description}";
+            else
+                Subtitle = $"{(searchItem.IsURL ? "Visit" : "Search")} as: {profilesOrdered[0].Name}";
+
+            TextToSuggest = searchItem.Query;
+            Icon = searchItem.Icon ?? KnowledgeIcon;
+
         }
 
         private void InitCalc(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered, CommandContextItem[]? otherSubcommands = null)
