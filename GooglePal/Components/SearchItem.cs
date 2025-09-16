@@ -22,6 +22,7 @@ namespace GooglePal.Components
         public static IconInfo CopyIcon = new IconInfo("\uE8C8");
         public static IconInfo DefinitionIcon = new IconInfo("\uE82D");
         public static IconInfo KnowledgeIcon = new IconInfo("\uE946");
+        public static IconInfo MoreIcon = new IconInfo("\uE948");
 
         private Action<string> SearchCommand;
 

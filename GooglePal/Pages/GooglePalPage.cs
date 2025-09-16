@@ -40,9 +40,14 @@ internal sealed partial class GooglePalPage : DynamicListPage
     // history
     public static int LevenshteinMaxDistance = 3;
 
+    public int historyLength = 5;
+
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
     {
+        // reset history length
+        if (!string.IsNullOrEmpty(newSearch)) historyLength = MaxPageItems - 1;
+
         // change main search text
         Suggestions.UpdateQuery(newSearch);
 
@@ -73,7 +78,8 @@ internal sealed partial class GooglePalPage : DynamicListPage
             updateUI: () => RaiseItemsChanged(totalItems: Suggestions?.Items.Length ?? 1),
             createDefaultPage: () => [
                 CreateDefaultSearchListItem(),
-                ..chrome.History.TakeLast(5).Reverse().Select(CreateSearchListItem)
+                ..chrome.History.TakeLast(historyLength).Reverse().Select(CreateSearchListItem),
+                CreateMoreHistoryListItem()
             ]
         );
     }
@@ -190,6 +196,36 @@ internal sealed partial class GooglePalPage : DynamicListPage
             suggestText: false,
             verb: "Open Chrome"
         );
+    }
+
+    private ListItem? CreateMoreHistoryListItem()
+    {
+        if (historyLength == chrome.History.Count) return null;
+        return new()
+        {
+            Title = "Show more history",
+            Icon = SearchItem.MoreIcon,
+            Command = new AnonymousCommand(() =>
+            {
+                // double the length
+                historyLength *= 2;
+
+                // clamp history length
+                if (historyLength > chrome.History.Count) historyLength = chrome.History.Count;
+
+                IsLoading = true;
+
+                // update
+                Suggestions.UpdateHomePage();
+
+                IsLoading = false;
+            })
+            {
+                Icon = SearchItem.MoreIcon,
+                Result = CommandResult.KeepOpen(),
+                Name = "Show more"
+            }
+        };
     }
 
 

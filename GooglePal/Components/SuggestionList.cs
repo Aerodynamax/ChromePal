@@ -50,6 +50,37 @@ namespace GooglePal.Components
             UpdateSuggestions(query: currQuery, above: QueryAbove, below: QueryResults);
         }
 
+        public void UpdateHomePage()
+        {
+            ListItem[] items = CreateDefaultPage.Invoke()
+                                    .Where(item => item != null)
+                                    .ToArray();
+
+            // set length to what is required
+            if (Items.Length < items.Length)
+                Items = [.. Items, .. new ListItem[items.Length - Items.Length]];
+
+            else if (Items.Length > ItemsLength)
+                Items = [.. Items.Take(ItemsLength)];
+
+
+            // update values
+            foreach (var item in items.Index())
+            {
+                // soft update current items
+                if (Items.Length > item.Index)
+                {
+                    if (Items[item.Index] == null)
+                        Items[item.Index] = item.Item;
+
+                    else if (Items[item.Index] != null && Items[item.Index].Title != item.Item.Title)
+                        UpdateListItemSilent(index: item.Index, newItem: item.Item);
+                }
+            }
+
+            UpdateUI.Invoke();
+        }
+
         public void UpdateQuery(string query)
         {
             currQuery = query;
@@ -57,13 +88,10 @@ namespace GooglePal.Components
             // show default page
             if (string.IsNullOrEmpty(query))
             {
-                ListItem[] defaultItems = CreateDefaultPage.Invoke();
-
-                // truncate
-                if (defaultItems.Length > ItemsLength) defaultItems = defaultItems.Take(ItemsLength).ToArray();
-
                 // hard refresh
-                Items = defaultItems;
+                Items = CreateDefaultPage.Invoke()
+                    .Where(item => item != null)
+                    .ToArray();
 
                 UpdateUI.Invoke();
 
@@ -77,7 +105,7 @@ namespace GooglePal.Components
 
             // if the important suggestion is still valid, keep it
             if (Items.FirstOrDefault()?.Title != Query.Title && 
-                ( Items.FirstOrDefault()?.Title.Length > Query.Title.Length) &&
+                Items.FirstOrDefault()?.Title.Length > Query.Title.Length &&
                 Levenshtein.startsWithLevenshtein(query, Items.FirstOrDefault()?.Title ?? "") == 0
                 )
             {
@@ -106,7 +134,12 @@ namespace GooglePal.Components
             if (below.Length > ItemsLength - 1) below = below.Take(ItemsLength - 1).ToArray();
 
             // reset items list length
-            Items = [.. Items, .. new ListItem[ItemsLength - Items.Length] ];
+            if (Items.Length < ItemsLength)
+                Items = [.. Items, .. new ListItem[ItemsLength - Items.Length]];
+
+            else if (Items.Length > ItemsLength)
+                Items = [.. Items.Take(ItemsLength)];
+
 
             // update suggestions
             foreach (var suggestion in below.Index())
