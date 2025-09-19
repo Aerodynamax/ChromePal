@@ -13,7 +13,7 @@ public partial class GooglePalCommandsProvider : CommandProvider
     private readonly ICommandItem[] _commands;
     private readonly SettingsManager _settingsManager = new();
 
-    private GooglePalPage searchPage = new GooglePalPage();
+    private GooglePalPage SearchPage = new GooglePalPage();
 
     public GooglePalCommandsProvider()
     {
@@ -21,14 +21,14 @@ public partial class GooglePalCommandsProvider : CommandProvider
         Settings = _settingsManager.Settings;
 
         // attach to setting changes
-        _settingsManager.OnSettingsSaved += searchPage.OnSettingsChanged;
+        _settingsManager.OnSettingsSaved += SearchPage.OnSettingsChanged;
         // fire event without changing settings
         _settingsManager.SendSavedUpdateEvent();
 
         DisplayName = "ChromePal";
         Icon = IconHelpers.FromRelativePath("Assets\\GoogleLogo.png");
         _commands = [
-            new CommandItem(searchPage),
+            new CommandItem(SearchPage),
         ];
     }
 

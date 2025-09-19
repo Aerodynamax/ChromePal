@@ -9,24 +9,42 @@ namespace GooglePal.Components
     internal class Levenshtein
     {
 
-        public static int startsWithLevenshtein(string a, string b)
+        public static int startsWithLevenshtein(string val1, string val2)
         {
             // initialise
             int dist = int.MaxValue;
 
             // compare the first part of the two
-            if (a.Length > b.Length)
+            if (val1.Length > val2.Length)
                 dist = ComputeDistanceLevenshtein(
-                    b,
-                    a.Substring(0, b.Length)
+                    val2,
+                    val1.Substring(0, val2.Length)
                 );
             else
                 dist = ComputeDistanceLevenshtein(
-                    a,
-                    b.Substring(0, a.Length)
+                    val1,
+                    val2.Substring(0, val1.Length)
                 );
 
             return dist;
+        }
+
+        /// <summary>
+        ///     Fuzzy searches to find if the two strings are equal.  If either string <br />
+        ///     is longer, it will be trimmed (hence the "startsWith").
+        /// </summary>
+        /// <param name="val1">The first string to compare.</param>
+        /// <param name="val2">The second string to compare.</param>
+        /// <param name="similarity">The number of characters that can be different between the two strings.</param>
+        /// <returns>A boolean which is true when the two strings are matching, and false if not.</returns>
+        public static bool startsWithLevenshtein(string val1, string val2, int similarity)
+        {
+            int dist = startsWithLevenshtein(val1: val1, val2: val2);
+
+            int len = Math.Min(val1.Length, val2.Length );
+
+            
+            return dist <= Math.Clamp(value: len - similarity, min: 0, max: similarity);
         }
 
         // https://www.dotnetperls.com/levenshtein

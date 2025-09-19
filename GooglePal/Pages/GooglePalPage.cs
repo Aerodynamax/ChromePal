@@ -4,8 +4,6 @@ using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
@@ -26,14 +24,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     public bool ShowLoading = true;
 
-    // chrome profile
-    public string ProfileConfigPath = Path.Combine(
-        Path.GetDirectoryName(System.AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
-        "profiles.json"
-    );
-
-    public List<Chrome.Profile> Profiles;
-    public string DefaultProfile;
+    // settings
 
     public bool OpenInNewWindow;
 
@@ -66,11 +57,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         PlaceholderText = "Search Google or type a URL";
 
-        // load profiles
-        Profiles = Chrome.LoadProfiles(ProfileConfigPath);
-
-        DefaultProfile = Profiles.FirstOrDefault()?.Name ?? "Last opened";
-
         // create page list
         Suggestions = new(
             length: MaxPageItems,
@@ -88,24 +74,27 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     private ListItem CreateSearchListItem(Suggestion searchItem)
     {
+        string url = searchItem.IsURL ? searchItem.Query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(searchItem.Query)}";
+
         List<CommandContextItem> otherCommands = [];
 
         // add "Copy to clipboard"
         if (searchItem.Type != SuggestionType.Calculation)
             otherCommands.Add(new(
-                    name: $"Copy \"{searchItem.Query}\" to clipboard",
-                    title: $"Copy \"{searchItem.Query}\" to clipboard",
+                    name: $"Copy \"{url}\" to clipboard",
+                    title: $"Copy \"{url}\" to clipboard",
                     action: () =>
                     {
-                        // set clipboard to query
-                        ClipboardHelper.SetText(searchItem.Query);
+                        // set clipboard to URL
+                        ClipboardHelper.SetText(url);
                     },
-                    result: CommandResult.ShowToast(new ToastArgs() { Message = "Copied to clipboard", Result = CommandResult.KeepOpen() })
+                    result: CommandResult.ShowToast(new ToastArgs() { Message = "Copied URL to clipboard", Result = CommandResult.Hide() })
                 )
             {
                 Icon = SearchItem.CopyIcon,
                 RequestedShortcut = KeyChordHelpers.FromModifiers(
                         ctrl: true,
+                        shift: true,
                         vkey: (int)VirtualKey.C
                     )
             });
@@ -134,30 +123,21 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
         return new SearchItem(
             searchItem: searchItem,
-            profilesOrdered: Profiles,
+            profilesOrdered: chrome.Profiles,
             searchCommand: (string profileName) =>
             {
-                // change default
-                DefaultProfile = profileName;
-
-                // move the default profile to the top
-                Profiles = Profiles
-                    .OrderByDescending(_profile => _profile.Name == DefaultProfile)
-                    .ToList();
-
-                // open chrome & allow UI to hide
-                Task.Run(() => chrome.OpenUrlInChromeProfile(
-                    url: searchItem.IsURL ? searchItem.Query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(searchItem.Query)}",
+                // open chrome
+                chrome.OpenUrlInChromeProfile(
+                    url: url,
                     profileName: profileName,
                     newWindow: OpenInNewWindow,
-                    addToHistory: (searchItem.Type <= SuggestionType.History) // Query / Website / History
-                ));
+                    addToHistory: (searchItem.Type <= SuggestionType.History), // Query / Website / History
+                    shuffleProfiles: true
+                );
 
                 // reset page
                 Suggestions.UpdateQuery("");
 
-                // save profiles
-                Chrome.SaveProfiles(Profiles, ProfileConfigPath);
             },
             otherSubcommands: otherCommands.ToArray()
         );
@@ -167,31 +147,20 @@ internal sealed partial class GooglePalPage : DynamicListPage
     {
         return new SearchItem(
             searchItem: new() { Query = "chrome://newtab", IsURL = true, Type = SuggestionType.Website },
-            profilesOrdered: Profiles,
+            profilesOrdered: chrome.Profiles,
             searchCommand: (string profileName) =>
             {
-
-                // change default
-                DefaultProfile = profileName;
-
-                // move the default profile to the top
-                Profiles = Profiles
-                    .OrderByDescending(_profile => _profile.Name == DefaultProfile)
-                    .ToList();
-
-                // open chrome & allow UI to hide
+                // open chrome
                 chrome.OpenUrlInChromeProfile(
                     url: "chrome://newtab",
                     profileName: profileName,
                     newWindow: OpenInNewWindow,
-                    addToHistory: false
+                    addToHistory: false,
+                    shuffleProfiles: true
                 );
 
                 // reset page
                 Suggestions.UpdateQuery("");
-
-                // save profiles
-                Chrome.SaveProfiles(Profiles, ProfileConfigPath);
             },
             suggestText: false,
             verb: "Open Chrome"
@@ -200,7 +169,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
     private ListItem? CreateMoreHistoryListItem()
     {
-        if (historyLength == chrome.History.Count) return null;
+        if (historyLength >= chrome.History.Count) return null;
         return new()
         {
             Title = "Show more history",
@@ -288,23 +257,18 @@ internal sealed partial class GooglePalPage : DynamicListPage
         OpenInNewWindow = eventArgs.OpenInNewBrowser;
         ShowLoading = eventArgs.ShowLoading;
 
+        // update Chrome properties
+        chrome.OnSettingsChanged(sender, eventArgs);
+
         // suggestions + query
         MaxPageItems = eventArgs.SuggestionLength + 1;
 
         Suggestions.UpdateLength(MaxPageItems);
 
-
-        // update history
-        chrome.OnSettingsChanged(sender, eventArgs);
-
         // update page to default
-        if (string.IsNullOrEmpty(SearchText)) UpdateSearchText("", "");
-
-        Debug.WriteLine($"Settings updated: {eventArgs.HistoryLength}");
+        Suggestions.UpdateHomePage();
     }
 
-    // compare the first part of the history query to the current query
-    // and order by most similar
     Suggestion[] RelevantFromHistory(string query)
     {
         // don't run for non queries
@@ -316,16 +280,17 @@ internal sealed partial class GooglePalPage : DynamicListPage
             return chrome.History
                 .Where(item => item.Query.Length >= query.Length)               // only check history items longer than query
                 .Where(item => query == item.Query.Substring(0, query.Length))  // check if the first chars match exactly
-                                                                                //.OrderBy(item => ) // TODO: order by recency & search count
+                //.OrderBy(item => )                                            // TODO: order by recency & search count
                 .ToArray();
         }
 
         Suggestion[] t = chrome.History
             .Where(item => item.Query.Length >= query.Length)
             .Where(item => Levenshtein.startsWithLevenshtein(
-                query,
-                item.Query) < LevenshteinMaxDistance
-            )
+                val1: query,
+                val2: item.Query,
+                similarity: LevenshteinMaxDistance
+            ))
             .OrderByDescending(item => Levenshtein.startsWithLevenshtein(
                 query,
                 item.Query

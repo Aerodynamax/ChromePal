@@ -16,8 +16,8 @@
        Publisher= to match your own identity -->
 
   <Properties>
-    <DisplayName>Search Google</DisplayName>
-    <PublisherDisplayName>A Lone Developer</PublisherDisplayName>
+    <DisplayName>Search with Chrome</DisplayName>
+    <PublisherDisplayName>Aerodynamax</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 

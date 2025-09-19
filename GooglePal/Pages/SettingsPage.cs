@@ -10,6 +10,7 @@ namespace GooglePal.Pages;
 
 public class SettingsChangedEventArgs : EventArgs
 {
+    public string BaseConfigPath { get; }
     public bool OpenInNewBrowser { get; }
     public int HistoryLength { get; }
     public int SuggestionLength { get; }
@@ -17,8 +18,9 @@ public class SettingsChangedEventArgs : EventArgs
     public bool IncludeKnowlegdePanels { get; }
     public bool KnowlegdePanelImages { get; }
 
-    public SettingsChangedEventArgs(bool openInNewBrowser, int historyLength, int suggestionLength, bool showLoading, bool knowlegePanels, bool knowlegeImages)
+    public SettingsChangedEventArgs(string baseConfigPath, bool openInNewBrowser, int historyLength, int suggestionLength, bool showLoading, bool knowlegePanels, bool knowlegeImages)
     {
+        BaseConfigPath = baseConfigPath;
         OpenInNewBrowser = openInNewBrowser;
         SuggestionLength = suggestionLength;
         HistoryLength = historyLength;
@@ -116,7 +118,7 @@ public class SettingsManager : JsonSettingsManager
         label: "Max suggestion count",
         description: "Set the max number of suggestions that can appear in search (not including exact search).",
         choices: [
-            new ChoiceSetSetting.Choice("All",  "999"),
+            new ChoiceSetSetting.Choice("All",  "50"),
             new ChoiceSetSetting.Choice("20",  "20"),
             new ChoiceSetSetting.Choice("10",  "10"),
             new ChoiceSetSetting.Choice("5",   "5"),
@@ -186,13 +188,13 @@ public class SettingsManager : JsonSettingsManager
 
         Settings.SettingsChanged += (s, a) =>
         {
-            OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
+            OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
             
             SaveSettings();
         };
     }
 
-    public static readonly string settingsConfigDirectory = Path.GetDirectoryName(System.AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory();
+    private static string settingsConfigDirectory = Utilities.BaseSettingsPath("ChromePal");
 
     internal static string SettingsJsonPath()
     {
@@ -203,6 +205,6 @@ public class SettingsManager : JsonSettingsManager
     // send history update (used in initialisation)
     public void SendSavedUpdateEvent()
     {
-        OnSettingsSaved?.Invoke(this, new(OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
+        OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
     }
 }

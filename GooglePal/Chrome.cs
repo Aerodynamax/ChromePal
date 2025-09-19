@@ -22,6 +22,19 @@ namespace GooglePal
             public required string ProfilePicturePath { get; set; }
         }
 
+        // profiles
+        private string ProfileConfigPath = default!;
+
+        public List<Profile> Profiles = [];
+
+
+        // history
+        private string HistoryConfigPath = default!;
+        private int HistoryLength = -1;
+
+        public List<Suggestion> History = [];
+
+
         // json
         JsonSerializerSettings JsonOptions = new JsonSerializerSettings
         {
@@ -31,19 +44,11 @@ namespace GooglePal
             DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate
         };
 
-        // history
-        private string HistoryConfigPath = Path.Combine(
-            Path.GetDirectoryName(AppContext.BaseDirectory) ?? Directory.GetCurrentDirectory(),
-            "history.json"
-        );
-        private int HistoryLength = -1;
-
-        public List<Suggestion> History = [];
 
         // suggestions
         bool IncludeKnowledgePanels = true;
         bool KnowledgePanelImages;
-
+        
         public void OnSettingsChanged(object? sender, SettingsChangedEventArgs eventArgs)
         {
             //  // invalidate cache if required
@@ -53,6 +58,14 @@ namespace GooglePal
             // settings
             IncludeKnowledgePanels = eventArgs.IncludeKnowlegdePanels;
             KnowledgePanelImages = eventArgs.KnowlegdePanelImages;
+
+            // configs
+            ProfileConfigPath = Path.Combine(eventArgs.BaseConfigPath, "profiles.json");
+            HistoryConfigPath = Path.Combine(eventArgs.BaseConfigPath, "history.json");
+
+            // load profiles
+            Profiles = LoadProfiles();
+
 
             // load history if first time
             if (HistoryLength == -1) History = LoadHistory(eventArgs.HistoryLength);
@@ -95,7 +108,7 @@ namespace GooglePal
         /// <summary>
         ///     Gets a list of Chrome's profile names and their respective directory names.
         /// </summary>
-        /// <returns>A List of Chrome.Profile objects with the Name and Folder of the profile.</returns>
+        /// <returns>A List of Chrome.Profile objects with the Name and Folder of each profile.</returns>
         public static List<Profile> GetChromeProfiles()
         {
             string defaultProfilePicture = "\uE77B";
@@ -166,7 +179,8 @@ namespace GooglePal
         /// <param name="url">The URL to open.</param>
         /// <param name="profileName">The display name of the profile.</param>
         /// <param name="newWindow">Whether to open a new window or a new tab.</param>
-        public void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false, bool addToHistory = true)
+        /// <param name="addToHistory">Whether to add query to the ChromePal search history (if history enabled).</param>
+        public void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false, bool addToHistory = true, bool shuffleProfiles = true)
         {
             // invalidate cache as suggestions may change with browsing
             //CachedQueries.Clear();
@@ -177,35 +191,46 @@ namespace GooglePal
             if (!File.Exists(chromeExe)) return;
 
             // get profile
-            Profile? profile = GetChromeProfiles().FirstOrDefault(_profile => _profile.Name == profileName);
+            Profile? profile = Profiles.FirstOrDefault(_profile => _profile.Name == profileName);
 
             if (profile == null) return;
 
-            // create history element from url
-            Suggestion historyItem;
+            // update profiles
+            if (shuffleProfiles)
+            {
+                // move the latest profile to the top
+                Profiles = Profiles
+                    .OrderByDescending(_profile => _profile.Name == profileName)
+                    .ToList();
 
-            if (url.StartsWith("https://www.google.com/search?q=", StringComparison.CurrentCulture))
-                historyItem = new()
-                {
-                    Query = HttpUtility.UrlDecode(url.Substring("https://www.google.com/search?q=".Length)),
-                    Type = SuggestionType.History,
-                    IsURL = false
-                };
-            else
-                historyItem = new()
-                {
-                    Query = url
-                            .Replace("http://", "")
-                            .Replace("https://", ""),
-                    Type = SuggestionType.History,
-                    IsURL = true
-                };
+                SaveProfiles();
+            }
 
             // add to history if not present & not new tab
             if (addToHistory)
             {
+                // create history element from url
+                Suggestion historyItem;
+
+                if (url.StartsWith("https://www.google.com/search?q=", StringComparison.CurrentCulture))
+                    historyItem = new()
+                    {
+                        Query = HttpUtility.UrlDecode(url.Substring("https://www.google.com/search?q=".Length)),
+                        Type = SuggestionType.History,
+                        IsURL = false
+                    };
+                else
+                    historyItem = new()
+                    {
+                        Query = url
+                                .Replace("http://", "")
+                                .Replace("https://", ""),
+                        Type = SuggestionType.History,
+                        IsURL = true
+                    };
+
                 // bump to end of list
-                History.RemoveAll(item => item.Query == historyItem.Query);
+                RemoveFromHistory(historyItem.Query);
 
                 History.Add(historyItem);
                 SaveHistory();
@@ -253,51 +278,35 @@ namespace GooglePal
                 ForceFocusWindow(
                     hWnd: chromeWindow.Hwnd
                 );
+
         }
 
 
         /// <summary>
-        ///     Opens a URL in a Chrome in the last used Chrome profile.
+        ///     Save the current ordering of chrome profiles to disk.
         /// </summary>
-        /// <param name="url">The URL to open.</param>
-        public static void OpenUrlInChrome(string url, bool? newWindow = false)
+        public void SaveProfiles()
         {
-            string chromeExe = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+            string jsonString = JsonConvert.SerializeObject(Profiles, JsonOptions);
 
-            if (!File.Exists(chromeExe)) return;
+            Debug.WriteLine($"Saving to: {ProfileConfigPath}");
 
-            // start chrome using start as it's the only way I found to reliably gain focus
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                WindowStyle = ProcessWindowStyle.Hidden,
-                Arguments = $"/c start \"\" \"{chromeExe}\" {((newWindow == true) ? "--new-window " : "")}\"{url}\"",
-                UseShellExecute = true
-            };
-
-            Process? chromeProcess = Process.Start(startInfo);
+            File.WriteAllText(ProfileConfigPath, jsonString);
         }
 
-
-        public static void SaveProfiles(List<Profile> profiles, string filePath)
-        {
-            string jsonString = JsonConvert.SerializeObject(profiles, Formatting.Indented);
-
-            Debug.WriteLine($"Saving to: {filePath}");
-
-            File.WriteAllText(filePath, jsonString);
-        }
-
-        public static List<Profile> LoadProfiles(string filePath)
+        /// <summary>
+        ///     Load the current ordering of chrome profiles from disk.
+        /// </summary>
+        public List<Profile> LoadProfiles()
         {
             var allProfiles = GetChromeProfiles();
             try
             {
-                Debug.WriteLine($"Loading profiles from: {filePath}");
+                Debug.WriteLine($"Loading profiles from: {ProfileConfigPath}");
 
-                string jsonString = File.ReadAllText(filePath);
+                string jsonString = File.ReadAllText(ProfileConfigPath);
 
-                List<Profile> profiles = JsonConvert.DeserializeObject<List<Profile>>(jsonString) ?? [];
+                List<Profile> profiles = JsonConvert.DeserializeObject<List<Profile>>(jsonString, JsonOptions) ?? [];
 
                 // add any missing profiles
                 profiles.AddRange(
@@ -320,7 +329,10 @@ namespace GooglePal
             }
         }
 
-
+        /// <summary>
+        ///     Remove all instances of a given query from ChromePal's history.
+        /// </summary>
+        /// <param name="query">The exact string to remove.</param>
         public void RemoveFromHistory(string query)
         {
             History.RemoveAll(historyItem => historyItem.Query == query);
@@ -331,6 +343,9 @@ namespace GooglePal
             SaveHistory();
         }
 
+        /// <summary>
+        ///     Save the current (ordered) ChromePal history to disk.
+        /// </summary>
         public void SaveHistory()
         {
             string jsonString = JsonConvert.SerializeObject(value: History.Take(HistoryLength), settings: JsonOptions);
@@ -343,6 +358,11 @@ namespace GooglePal
 
         public List<Suggestion> LoadHistory() => LoadHistory(HistoryLength);
 
+        /// <summary>
+        ///     Load the current (ordered) ChromePal search history from disk.
+        /// </summary>
+        /// <param name="maxLength">The maximum number of history items to load.</param>
+        /// <returns>List<Suggestion> of history items with their properties</returns>
         public List<Suggestion> LoadHistory(int maxLength)
         {
             try

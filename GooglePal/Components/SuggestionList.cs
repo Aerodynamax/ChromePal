@@ -60,8 +60,8 @@ namespace GooglePal.Components
             if (Items.Length < items.Length)
                 Items = [.. Items, .. new ListItem[items.Length - Items.Length]];
 
-            else if (Items.Length > ItemsLength)
-                Items = [.. Items.Take(ItemsLength)];
+            else if (Items.Length > items.Length)
+                Items = [.. Items.Take(items.Length)];
 
 
             // update values
@@ -73,7 +73,7 @@ namespace GooglePal.Components
                     if (Items[item.Index] == null)
                         Items[item.Index] = item.Item;
 
-                    else if (Items[item.Index] != null && Items[item.Index].Title != item.Item.Title)
+                    else if (Items[item.Index] != null) //  && !CompareListItem(index: item.Index, newItem: item.Item)
                         UpdateListItemSilent(index: item.Index, newItem: item.Item);
                 }
             }
@@ -89,9 +89,7 @@ namespace GooglePal.Components
             if (string.IsNullOrEmpty(query))
             {
                 // hard refresh
-                Items = CreateDefaultPage.Invoke()
-                    .Where(item => item != null)
-                    .ToArray();
+                UpdateHomePage();
 
                 UpdateUI.Invoke();
 
@@ -124,7 +122,7 @@ namespace GooglePal.Components
 
         public void UpdateSuggestions(string query, ListItem? above, ListItem[] below)
         {
-            if (string.IsNullOrEmpty(query)) return;
+            if (string.IsNullOrEmpty(query) || string.IsNullOrEmpty(currQuery)) return;
 
             // store (in case of refreshes)
             QueryResults = below;
@@ -220,6 +218,35 @@ namespace GooglePal.Components
             Items[index].Section = newItem.Section;
             Items[index].Details = newItem.Details;
             Items[index].Tags = newItem.Tags;
+        }
+
+
+        /// <summary>
+        ///     Compare an item to one at a given index
+        /// </summary>
+        /// <param name="index">The position of the item to be compared against.</param>
+        /// <param name="newItem">The item that will be compared too.</param>
+        /// <returns>Bool that is true if the items are equal and false if they aren't</returns>
+        private bool CompareListItem(int index, ListItem newItem)
+        {
+            // return if invalid location
+            if (index > Items.Length - 1 || index < 0) return false;
+
+            if (Items[index] == null)
+                Items[index] = new();
+
+            // update properties individually
+            if (Items[index].Title != newItem.Title) return false;
+            if (Items[index].Subtitle != newItem.Subtitle) return false;
+            if (Items[index].TextToSuggest != newItem.TextToSuggest) return false;
+            if (Items[index].Command != newItem.Command) return false;
+            if (Items[index].MoreCommands != newItem.MoreCommands) return false;
+            if (Items[index].Icon != newItem.Icon) return false;
+            if (Items[index].Section != newItem.Section) return false;
+            if (Items[index].Details != newItem.Details) return false;
+            if (Items[index].Tags != newItem.Tags) return false;
+
+            return true;
         }
     }
 }
