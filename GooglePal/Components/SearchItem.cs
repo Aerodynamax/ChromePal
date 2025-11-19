@@ -1,4 +1,5 @@
 ﻿using ABI.Microsoft.CommandPalette.Extensions;
+using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using Newtonsoft.Json;
 using System;
@@ -103,7 +104,7 @@ namespace GooglePal.Components
             Command = new AnonymousCommand(() => SearchCommand(profilesOrdered[0].Name))
             {
                 Name = $"{(!string.IsNullOrEmpty(Verb) ? Verb : (searchItem.IsURL ? "Visit" : "Search"))} ({profilesOrdered[0].Name})",
-                Icon = icon
+                Icon = icon,
             };
         }
 

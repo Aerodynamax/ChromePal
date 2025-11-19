@@ -1,11 +1,18 @@
 ﻿using GooglePal.Pages;
+using Microsoft.CommandPalette.Extensions.Toolkit;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Reflection.Metadata.Ecma335;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
@@ -20,6 +27,7 @@ namespace GooglePal
             public required string Name { get; set; }
             public required string Folder { get; set; }
             public required string ProfilePicturePath { get; set; }
+            public required string TaskbarIconPath { get; set; }
         }
 
         // profiles
@@ -144,25 +152,31 @@ namespace GooglePal
                             // get profile name
                             string? displayName = nameElement.GetString();
 
-                            if (!string.IsNullOrEmpty(displayName))
+                            if (string.IsNullOrEmpty(displayName))
+                                continue;
+
+                            if (property.Value.TryGetProperty("gaia_picture_file_name", out var iconRelativePathElement))
                             {
-                                if (property.Value.TryGetProperty("gaia_picture_file_name", out var iconRelativePathElement))
-                                {
-                                    // get profile icon
-                                    string? iconPath = iconRelativePathElement.GetString();
+                                // get profile icon
+                                string? iconPath = iconRelativePathElement.GetString();
 
-                                    if (iconPath != null) iconPath = Path.Combine(appDataPath, "Google", "Chrome", "User Data", directoryName, iconPath);
+                                if (iconPath == null)
+                                    continue;
 
-                                    // add profile
-                                    profiles.Add(
-                                        new()
-                                        {
-                                            Name = displayName,
-                                            Folder = directoryName,
-                                            ProfilePicturePath = iconPath ?? defaultProfilePicture
-                                        }
-                                    );
-                                }
+                                iconPath = Path.Combine(appDataPath, "Google", "Chrome", "User Data", directoryName, iconPath);
+
+                                string taskbarIconPath = Path.Combine(appDataPath, "Google", "Chrome", "User Data", directoryName, "Google Profile.ico");
+
+                                // add profile
+                                profiles.Add(
+                                    new()
+                                    {
+                                        Name = displayName,
+                                        Folder = directoryName,
+                                        ProfilePicturePath = iconPath ?? defaultProfilePicture,
+                                        TaskbarIconPath = taskbarIconPath
+                                    }
+                                );
                             }
                         }
                     }
@@ -180,7 +194,7 @@ namespace GooglePal
         /// <param name="profileName">The display name of the profile.</param>
         /// <param name="newWindow">Whether to open a new window or a new tab.</param>
         /// <param name="addToHistory">Whether to add query to the ChromePal search history (if history enabled).</param>
-        public void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false, bool addToHistory = true, bool shuffleProfiles = true)
+        public async void OpenUrlInChromeProfile(string url, string profileName, bool newWindow = false, bool addToHistory = true, bool shuffleProfiles = true)
         {
             // invalidate cache as suggestions may change with browsing
             //CachedQueries.Clear();
@@ -195,46 +209,67 @@ namespace GooglePal
 
             if (profile == null) return;
 
-            // update profiles
-            if (shuffleProfiles)
+            // update history and profiles in background
+            _ = Task.Run(() =>
             {
-                // move the latest profile to the top
-                Profiles = Profiles
-                    .OrderByDescending(_profile => _profile.Name == profileName)
-                    .ToList();
+                // update profiles
+                if (shuffleProfiles)
+                {
+                    // move the latest profile to the top
+                    Profiles = Profiles
+                        .OrderByDescending(_profile => _profile.Name == profileName)
+                        .ToList();
 
-                SaveProfiles();
+                    SaveProfiles();
+                }
+
+                // add to history if not present & not new tab
+                if (addToHistory)
+                {
+                    // create history element from url
+                    Suggestion historyItem;
+
+                    if (url.StartsWith("https://www.google.com/search?q=", StringComparison.CurrentCulture))
+                        historyItem = new()
+                        {
+                            Query = HttpUtility.UrlDecode(url.Substring("https://www.google.com/search?q=".Length)),
+                            Type = SuggestionType.History,
+                            IsURL = false
+                        };
+                    else
+                        historyItem = new()
+                        {
+                            Query = url
+                                    .Replace("http://", "")
+                                    .Replace("https://", ""),
+                            Type = SuggestionType.History,
+                            IsURL = true
+                        };
+
+                    // bump to end of list
+                    RemoveFromHistory(historyItem.Query);
+
+                    History.Add(historyItem);
+                    SaveHistory();
+                }
+            });
+            
+            
+            // get schema if port in URL
+
+            int? port = UriGetPort(url);
+            // if there is a port and no schema
+            if (port != null && !UriHasScheme(url))
+            {
+                bool isHTTPS = await SupportsTlsAsync(
+                    host: url.Split($":{port}").FirstOrDefault() ?? "",
+                    port: port ?? 80
+                );
+
+                // add correct schema to url (Chrome doesn't open urls with ports if they don't have schema)
+                url = ( isHTTPS ? "https://" : "http://" ) + url;
             }
 
-            // add to history if not present & not new tab
-            if (addToHistory)
-            {
-                // create history element from url
-                Suggestion historyItem;
-
-                if (url.StartsWith("https://www.google.com/search?q=", StringComparison.CurrentCulture))
-                    historyItem = new()
-                    {
-                        Query = HttpUtility.UrlDecode(url.Substring("https://www.google.com/search?q=".Length)),
-                        Type = SuggestionType.History,
-                        IsURL = false
-                    };
-                else
-                    historyItem = new()
-                    {
-                        Query = url
-                                .Replace("http://", "")
-                                .Replace("https://", ""),
-                        Type = SuggestionType.History,
-                        IsURL = true
-                    };
-
-                // bump to end of list
-                RemoveFromHistory(historyItem.Query);
-
-                History.Add(historyItem);
-                SaveHistory();
-            }
 
             // start chrome args
             var startInfo = new ProcessStartInfo
@@ -256,22 +291,27 @@ namespace GooglePal
 
 
             // only get chrome processes whose title changed
-            TopLevelWindowInfo[] chromeWindows = FindProcessWindows(processName: "chrome")
-                .Where(proc => !chromeList.Any(prevProc =>
-                    (prevProc.Hwnd == proc.Hwnd && prevProc.Title == proc.Title)
-                )).ToArray();
+            TopLevelWindowInfo? chromeWindow = null;
 
+            // timeout
+            Stopwatch timeout = new();
+            timeout.Start();
 
             // wait until tab is opened (required for new windows)
-            while (chromeWindows.Length < 1)
+            while (chromeWindow == null && timeout.ElapsedMilliseconds < 2500)
             {
-                chromeWindows = FindProcessWindows(processName: "chrome")
-                    .Where(proc => !chromeList.Any(prevProc =>
-                        (prevProc.Hwnd == proc.Hwnd && prevProc.Title == proc.Title)
-                    )).ToArray();
+                chromeWindow = FindProcessWindows(processName: "chrome")
+                    .FirstOrDefault(proc => 
+                        !chromeList.Any(
+                            prevProc => (prevProc.Hwnd == proc.Hwnd && prevProc.Title == proc.Title)
+                        )
+                    );
+
+                // let the computer actually do its thing
+                Thread.Sleep(10);
             }
 
-            TopLevelWindowInfo? chromeWindow = chromeWindows.FirstOrDefault();
+            timeout.Stop();
 
             // maximise & focus
             if (chromeWindow != null)
@@ -391,5 +431,88 @@ namespace GooglePal
             }
         }
 
+
+        /// <summary>
+        ///     Check if URL is https or http.
+        /// </summary>
+        /// <param name="host">the domain name being checked</param>
+        /// <param name="port">the port of the website being visited</param>
+        /// <param name="timeoutMs">milliseconds to wait before assuming page is down</param>
+        /// <returns></returns>
+        public static async Task<bool> SupportsTlsAsync(string host, int port, int timeoutMs = 700)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                
+                // start the connection attempt
+                var connectTask = client.ConnectAsync(host, port);
+
+                // attempt to connect with timeout
+                if (await Task.WhenAny(connectTask, Task.Delay(timeoutMs)) == connectTask)
+                {
+                    // attempt SSL Handshake
+                    using var sslStream = new SslStream(
+                        innerStream: client.GetStream(),
+                        leaveInnerStreamOpen: false,
+                        // return true to ignore errors (self-signed)
+                        userCertificateValidationCallback: (sender, cert, chain, errors) => true
+                    );
+
+                    var authTask = sslStream.AuthenticateAsClientAsync(host);
+
+                    // Apply timeout to the handshake as well
+                    if (await Task.WhenAny(authTask, Task.Delay(timeoutMs)) == authTask)
+                    {
+                        await authTask; // Propagate exceptions if failed
+                        return true;
+                    }
+                }
+            }
+            // if there are any errors in the process, assume http
+            catch { }
+
+            return false;
+        }
+
+        /// <summary>
+        ///     Checks if a provided URI has specified a port
+        /// </summary>
+        /// <param name="uriString"></param>
+        /// <returns></returns>
+        public static int? UriGetPort(string uriString)
+        {
+            Regex regex = new Regex(@":(?<port>\d+)");
+            Match match = regex.Match(uriString);
+
+            if (match.Success)
+            {
+                string portString = match.Groups["port"].Value;
+                if (int.TryParse(portString, out int portNumber))
+                {
+                    return portNumber;
+                }
+            }
+
+            // No port specified or parsing failed, so it doesn't have a *specified* non-default port
+            return null;
+        }
+
+        /// <summary>
+        ///     Check if URI string contains scheme (e.g. "http://", "https://")
+        /// </summary>
+        /// <param name="uriString"></param>
+        /// <returns></returns>
+        public static bool UriHasScheme(string uriString)
+        {
+            if (string.IsNullOrEmpty(uriString))
+            {
+                return false;
+            }
+
+            // detects a schema regardless of overall URI validity
+            Regex schemaRegex = new Regex(@"^[a-zA-Z]+:/?/?");
+            return schemaRegex.IsMatch(uriString);
+        }
     }
 }

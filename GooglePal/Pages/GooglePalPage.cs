@@ -4,6 +4,7 @@ using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
@@ -126,6 +127,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
             profilesOrdered: chrome.Profiles,
             searchCommand: (string profileName) =>
             {
+                // show loading
+                IsLoading = true;
+
                 // open chrome
                 chrome.OpenUrlInChromeProfile(
                     url: url,
@@ -137,6 +141,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
                 // reset page
                 Suggestions.UpdateQuery("");
+
+                // stop loading
+                IsLoading = false;
 
             },
             otherSubcommands: otherCommands.ToArray()
@@ -150,6 +157,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
             profilesOrdered: chrome.Profiles,
             searchCommand: (string profileName) =>
             {
+                // show loading
+                IsLoading = true;
+
                 // open chrome
                 chrome.OpenUrlInChromeProfile(
                     url: "chrome://newtab",
@@ -161,6 +171,9 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
                 // reset page
                 Suggestions.UpdateQuery("");
+
+                // stop loading
+                IsLoading = false;
             },
             suggestText: false,
             verb: "Open Chrome"
