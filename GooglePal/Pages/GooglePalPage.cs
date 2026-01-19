@@ -2,6 +2,7 @@
 using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
+using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -9,6 +10,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Web;
 using Windows.System;
+using static GooglePal.Chrome;
 using static GooglePal.Google;
 
 namespace GooglePal;
@@ -26,13 +28,16 @@ internal sealed partial class GooglePalPage : DynamicListPage
     public bool ShowLoading = true;
 
     // settings
-
     public bool OpenInNewWindow;
 
     // history
     public static int LevenshteinMaxDistance = 3;
 
     public int historyLength = 5;
+
+    // opening chrome indicator
+    public bool ShowOpeningPage = true;
+
 
     // update UI when search bar changes
     public async override void UpdateSearchText(string oldSearch, string newSearch)
@@ -128,7 +133,11 @@ internal sealed partial class GooglePalPage : DynamicListPage
             searchCommand: (string profileName) =>
             {
                 // show loading
-                IsLoading = true;
+                if (ShowOpeningPage)
+                    ShowSearchIndicator(chrome.Profiles.FirstOrDefault( profile => profile.Name == profileName) ?? chrome.Profiles.First() );
+
+                else if (ShowLoading)
+                    IsLoading = true;
 
                 // open chrome
                 chrome.OpenUrlInChromeProfile(
@@ -141,10 +150,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
                 // reset page
                 Suggestions.UpdateQuery("");
-
-                // stop loading
                 IsLoading = false;
-
             },
             otherSubcommands: otherCommands.ToArray()
         );
@@ -158,7 +164,11 @@ internal sealed partial class GooglePalPage : DynamicListPage
             searchCommand: (string profileName) =>
             {
                 // show loading
-                IsLoading = true;
+                if (ShowOpeningPage)
+                    ShowSearchIndicator( chrome.Profiles.FirstOrDefault(profile => profile.Name == profileName) ?? chrome.Profiles.First() );
+
+                else if (ShowLoading)
+                    IsLoading = true;
 
                 // open chrome
                 chrome.OpenUrlInChromeProfile(
@@ -171,8 +181,6 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
                 // reset page
                 Suggestions.UpdateQuery("");
-
-                // stop loading
                 IsLoading = false;
             },
             suggestText: false,
@@ -210,6 +218,23 @@ internal sealed partial class GooglePalPage : DynamicListPage
         };
     }
 
+    private void ShowSearchIndicator(Chrome.Profile profile)
+    {
+        IsLoading = true;
+
+        // large icon and text in the middle
+        EmptyContent = new CommandItem(new NoOpCommand())
+        {
+            Title = "Opening Chrome ...",
+            Icon = new IconInfo(profile.TaskbarIconPath),
+            Subtitle = "This shouldn't take too long.",
+        };
+
+        // clear page
+        Suggestions.ClearSuggestions();
+
+        IsLoading = false;
+    }
 
     public async Task UpdateSuggestions(string query)
     {
@@ -269,6 +294,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
     {
         OpenInNewWindow = eventArgs.OpenInNewBrowser;
         ShowLoading = eventArgs.ShowLoading;
+        ShowOpeningPage = eventArgs.ShowOpening;
 
         // update Chrome properties
         chrome.OnSettingsChanged(sender, eventArgs);

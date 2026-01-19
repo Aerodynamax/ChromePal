@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
+using Windows.ApplicationModel.VoiceCommands;
 using Windows.Devices.Sms;
 using static GooglePal.Google;
 
@@ -84,6 +85,9 @@ namespace GooglePal.Components
         public void UpdateQuery(string query)
         {
             currQuery = query;
+
+            // reset suggestions size if empty
+            Items = new ListItem[ItemsLength];
 
             // show default page
             if (string.IsNullOrEmpty(query))
@@ -190,6 +194,11 @@ namespace GooglePal.Components
             UpdateUI.Invoke();
         }
 
+        public void ClearSuggestions()
+        {
+            Items = [];
+            UpdateUI.Invoke();
+        }
 
         /// <summary>
         ///     Update an item in the list without hard changing it's properties.
@@ -206,7 +215,7 @@ namespace GooglePal.Components
             if (index > Items.Length - 1 || index < 0) return;
 
             if (Items[index] == null)
-                Items[index] = new();
+                Items[index] = new ListItem();
 
             // update properties individually
             Items[index].Title = newItem.Title;

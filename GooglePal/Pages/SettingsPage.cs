@@ -15,16 +15,18 @@ public class SettingsChangedEventArgs : EventArgs
     public int HistoryLength { get; }
     public int SuggestionLength { get; }
     public bool ShowLoading { get; }
+    public bool ShowOpening { get; }
     public bool IncludeKnowlegdePanels { get; }
     public bool KnowlegdePanelImages { get; }
 
-    public SettingsChangedEventArgs(string baseConfigPath, bool openInNewBrowser, int historyLength, int suggestionLength, bool showLoading, bool knowlegePanels, bool knowlegeImages)
+    public SettingsChangedEventArgs(string baseConfigPath, bool openInNewBrowser, int historyLength, int suggestionLength, bool showLoading, bool showOpening, bool knowlegePanels, bool knowlegeImages)
     {
         BaseConfigPath = baseConfigPath;
         OpenInNewBrowser = openInNewBrowser;
         SuggestionLength = suggestionLength;
         HistoryLength = historyLength;
         ShowLoading = showLoading;
+        ShowOpening = showOpening;
         IncludeKnowlegdePanels = knowlegePanels;
         KnowlegdePanelImages = knowlegeImages;
     }
@@ -59,6 +61,15 @@ public class SettingsManager : JsonSettingsManager
         defaultValue: true
     );
     public bool ShowLoading => _ShowLoading.Value;
+
+    // show opening indicator
+    private readonly ToggleSetting _ShowOpening = new(
+        key: Namespaced(nameof(ShowOpening)),
+        label: "Show opening Chrome indicator",
+        description: "Enable/Disable showing a \"Opening Chrome\" page while waiting for the browser to open.",
+        defaultValue: true
+    );
+    public bool ShowOpening => _ShowOpening.Value;
 
 
     // show knowledge panels
@@ -180,7 +191,9 @@ public class SettingsManager : JsonSettingsManager
         Settings.Add(_HistoryLength);
         
         Settings.Add(_ShowLoading);
-        
+
+        Settings.Add(_ShowOpening);
+
         Settings.Add(_OpenInNewBrowser);
 
 
@@ -188,7 +201,7 @@ public class SettingsManager : JsonSettingsManager
 
         Settings.SettingsChanged += (s, a) =>
         {
-            OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
+            OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, ShowOpening, IncludeKnowledgePanels, KnowledgePanelImages));
             
             SaveSettings();
         };
@@ -205,6 +218,6 @@ public class SettingsManager : JsonSettingsManager
     // send history update (used in initialisation)
     public void SendSavedUpdateEvent()
     {
-        OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, IncludeKnowledgePanels, KnowledgePanelImages));
+        OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, ShowOpening, IncludeKnowledgePanels, KnowledgePanelImages));
     }
 }

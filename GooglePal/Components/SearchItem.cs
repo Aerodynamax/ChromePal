@@ -104,7 +104,7 @@ namespace GooglePal.Components
             Command = new AnonymousCommand(() => SearchCommand(profilesOrdered[0].Name))
             {
                 Name = $"{(!string.IsNullOrEmpty(Verb) ? Verb : (searchItem.IsURL ? "Visit" : "Search"))} ({profilesOrdered[0].Name})",
-                Icon = icon,
+                Icon = icon
             };
         }
 
@@ -181,17 +181,17 @@ namespace GooglePal.Components
         private CommandContextItem[] CreateCommands(Google.Suggestion searchItem, List<Chrome.Profile> profilesOrdered)
         {
             return profilesOrdered.Select(profile => CreateSubCommand(
+                searchItem: searchItem,
                 profile: profile,
-                isURL: searchItem.IsURL,
                 index: profilesOrdered.IndexOf(profile)
             )).ToArray();
         }
 
-        private CommandContextItem CreateSubCommand(Chrome.Profile profile, bool isURL, int index)
+        private CommandContextItem CreateSubCommand(Google.Suggestion searchItem, Chrome.Profile profile, int index)
         {
             return new CommandContextItem(
-                name: isURL ? $"Visit ({profile.Name})" : $"Search ({profile.Name})",
-                title: isURL ? $"Visit as: {profile.Name}" : $"Search as: {profile.Name}",
+                name: searchItem.IsURL ? $"Visit ({profile.Name})" : $"Search ({profile.Name})",
+                title: searchItem.IsURL ? $"Visit as: {profile.Name}" : $"Search as: {profile.Name}",
                 action: () => SearchCommand(profile.Name)
             )
             {
