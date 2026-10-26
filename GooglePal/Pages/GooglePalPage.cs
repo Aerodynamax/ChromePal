@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using Windows.System;
@@ -242,7 +243,19 @@ internal sealed partial class GooglePalPage : DynamicListPage
         if (!IsLoading && ShowLoading) IsLoading = true;
 
         // update suggestions
-        List<Suggestion> suggestions = await chrome.GetSuggestionsAsync(query);
+        List<Suggestion> suggestions = [];
+
+        CancellationTokenSource tokenSource = new();
+        Task<List<Suggestion>> getSuggestionsTask = chrome.GetSuggestionsAsync(query, tokenSource.Token);
+
+        // 30s timeout
+        if (await Task.WhenAny(getSuggestionsTask, Task.Delay(30000)) == getSuggestionsTask)
+            suggestions = getSuggestionsTask.Result;
+        else
+            // timeout
+            tokenSource.Cancel();
+
+        tokenSource.Dispose();
 
 
         // find relevant history
@@ -253,7 +266,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         if (historyItems.Length > 0 && suggestions.Count > 0)
         {
             // remove history suggestions
-            suggestions.RemoveAll(suggestion => historyItems.Any(history => history.Query == suggestion.Query));
+            suggestions.RemoveAll(suggestion => historyItems.Any(history => history == suggestion));
 
 
             // find exact matching URLs to place above user query
@@ -267,7 +280,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
 
             // remove important items from regular & only take most similar
             historyItems = historyItems
-                .Where(item => item.Query != historyImportant?.Query)
+                .Where(item => item != historyImportant)
                 .OrderByDescending(item => Levenshtein.startsWithLevenshtein(query, item.Query))
                 .Take(2)
                 .ToArray();

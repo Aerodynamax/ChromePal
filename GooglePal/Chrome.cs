@@ -2,6 +2,7 @@
 using Microsoft.CommandPalette.Extensions.Toolkit;
 using Newtonsoft.Json;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -28,6 +29,14 @@ namespace GooglePal
             public required string Folder { get; set; }
             public required string ProfilePicturePath { get; set; }
             public required string TaskbarIconPath { get; set; }
+
+
+            // override equality check for things like FirstOrDefault
+            public static bool operator ==(Profile? a, Profile? b) => a?.Equals(b) == true;
+            public static bool operator !=(Profile? a, Profile? b) => !a?.Equals(b) == true;
+            public override bool Equals(object? obj) => obj != null && Equals(obj as Profile);
+            public bool Equals(Profile? other) => !object.ReferenceEquals(other, null) && Folder == other.Folder;
+            public override int GetHashCode() => Folder.GetHashCode();
         }
 
         // profiles
@@ -96,7 +105,7 @@ namespace GooglePal
             foreach (Suggestion suggestion in suggestions)
                 {
                     // change type to history if suggestion in history
-                    if (History.Any(item => item.Query == suggestion.Query))
+                    if (History.Any(item => item == suggestion))
                         suggestion.Type = SuggestionType.History;
 
                 // remove knowledge panels if not required
@@ -349,15 +358,16 @@ namespace GooglePal
                 List<Profile> profiles = JsonConvert.DeserializeObject<List<Profile>>(jsonString, JsonOptions) ?? [];
 
                 // add any missing profiles
-                profiles.AddRange(
-                    allProfiles.Where(profile =>
-                        !profiles.Select(knownProfile => knownProfile.Name)
-                                 .Contains(profile.Name)
-                    )
-                );
+                allProfiles = allProfiles.OrderBy(p => profiles.IndexOf(p)).ToList();
+                //profiles.AddRange(
+                //    allProfiles.Where(profile =>
+                //        !profiles.Select(knownProfile => knownProfile.Name)
+                //                 .Contains(profile.Name)
+                //    )
+                //);
 
                 // return profiles
-                return profiles;
+                return allProfiles;
 
 
             }
@@ -494,7 +504,7 @@ namespace GooglePal
                 }
             }
 
-            // No port specified or parsing failed, so it doesn't have a *specified* non-default port
+            // No port specified or parsing failed, so it doesn't have a non-default port
             return null;
         }
 
@@ -506,9 +516,7 @@ namespace GooglePal
         public static bool UriHasScheme(string uriString)
         {
             if (string.IsNullOrEmpty(uriString))
-            {
                 return false;
-            }
 
             // detects a schema regardless of overall URI validity
             Regex schemaRegex = new Regex(@"^[a-zA-Z]+:/?/?");

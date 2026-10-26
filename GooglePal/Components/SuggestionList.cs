@@ -13,7 +13,7 @@ namespace GooglePal.Components
     partial class SuggestionList
     {
         // suggestions
-        public ListItem[] Items = new ListItem[6];
+        public ListItem[] Items = [];
 
         private int ItemsLength = 6;
 
@@ -40,7 +40,7 @@ namespace GooglePal.Components
             CreateListItem = createListItem;
             CreateDefaultPage = createDefaultPage;
 
-            Items = new ListItem[length];
+            //Items = new ListItem[length];
             ItemsLength = length;
         }
         public void UpdateLength(int length)
@@ -74,7 +74,7 @@ namespace GooglePal.Components
                     if (Items[item.Index] == null)
                         Items[item.Index] = item.Item;
 
-                    else if (Items[item.Index] != null) //  && !CompareListItem(index: item.Index, newItem: item.Item)
+                    else if (!CompareListItem(index: item.Index, newItem: item.Item))
                         UpdateListItemSilent(index: item.Index, newItem: item.Item);
                 }
             }
@@ -133,32 +133,26 @@ namespace GooglePal.Components
             QueryAbove = above;
 
             // only keep suggestions that will be rendered
-            if (below.Length > ItemsLength - 1) below = below.Take(ItemsLength - 1).ToArray();
+            if (below.Length > ItemsLength - 1)
+                below = below.Take(ItemsLength - 1).ToArray();
 
             // reset items list length
-            if (Items.Length < ItemsLength)
-                Items = [.. Items, .. new ListItem[ItemsLength - Items.Length]];
+            while (Items.Length < ItemsLength)
+                Items = Items.Append(new ListItem()).ToArray();
 
-            else if (Items.Length > ItemsLength)
-                Items = [.. Items.Take(ItemsLength)];
+            if (Items.Length > ItemsLength)
+                Items = Items.Take(ItemsLength).ToArray();
 
 
             // update suggestions
             foreach (var suggestion in below.Index())
             {
                 // skip out of range
-                if (suggestion.Index > Items.Length - 2) continue;
-
-                // speed through if out of date
-                if (query != currQuery || suggestion.Index > 2)
-                {
-                    // too fast normally, causes biting
-                    Items[suggestion.Index + 1] = suggestion.Item;
+                if (suggestion.Index >= Items.Length - 1)
                     continue;
-                }
 
                 // update text
-                UpdateListItemSilent(index: suggestion.Index + 1, newItem: suggestion.Item);
+                Items[suggestion.Index + 1] = suggestion.Item;
             }
 
             // remove non items
@@ -211,11 +205,17 @@ namespace GooglePal.Components
         /// <param name="newItem">The item that will replace the current one.</param>
         private void UpdateListItemSilent(int index, ListItem newItem)
         {
+            if (Items == null) return;
+            if (newItem == null)
+                return;
+
             // return if invalid location
             if (index > Items.Length - 1 || index < 0) return;
 
-            if (Items[index] == null)
-                Items[index] = new ListItem();
+            Items[index] ??= new ListItem();
+
+            //if (Items[index] == null)
+            //    Items[index] ??= new ListItem();
 
             // update properties individually
             Items[index].Title = newItem.Title;

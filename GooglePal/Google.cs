@@ -1,18 +1,15 @@
 ﻿using Microsoft.CommandPalette.Extensions.Toolkit;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
-using static GooglePal.Google;
 
 namespace GooglePal
 {
@@ -37,6 +34,13 @@ namespace GooglePal
             public string? Title { get; set; }
             public string? Description { get; set; }
             public IconInfo? Icon { get; set; }
+
+            // override equality check for things like FirstOrDefault
+            public static bool operator ==(Suggestion? a, Suggestion? b) => a?.Equals(b) == true;
+            public static bool operator !=(Suggestion? a, Suggestion? b) => !a?.Equals(b) == true;
+            public override bool Equals(object? obj) => obj != null && Equals(obj as Suggestion);
+            public bool Equals(Suggestion? other) => !object.ReferenceEquals(other, null) && Query == other.Query;
+            public override int GetHashCode() => Query.GetHashCode();
         }
 
         private HttpClient client = new();
@@ -51,6 +55,14 @@ namespace GooglePal
         {
             public required string Query { get; set; }
             public required List<Suggestion> Suggestions { get; set; }
+
+            // override equality check for things like FirstOrDefault
+            public static bool operator ==(CachedQuery? a, CachedQuery? b) => a?.Equals(b) == true;
+            public static bool operator !=(CachedQuery? a, CachedQuery? b) => !a?.Equals(b) == true;
+            public override bool Equals(object? obj) => obj != null && Equals(obj as CachedQuery);
+            public bool Equals(CachedQuery? other) => !object.ReferenceEquals(other, null) && Query == other.Query;
+            public override int GetHashCode() => Query.GetHashCode();
+
         }
 
         protected List<CachedQuery> CachedQueries = [];
@@ -148,7 +160,7 @@ namespace GooglePal
                 if (suggestionTypes.Contains(SuggestionType.KnowledgePanel))
                     foreach (var specialSuggestion in otherSuggestions.Where(item => item.Type != SuggestionType.Definition))
                     {
-                        int index = suggestions.FindIndex(item => item.Query == specialSuggestion.Query);
+                        int index = suggestions.FindIndex(item => item == specialSuggestion);
 
                         // replace non-special with special if present
                         if (index != -1)
@@ -435,6 +447,13 @@ namespace GooglePal
                 return false;
             }
 
+            // allow IP addresses
+            // DnsSafeHost will extend unfinished ip addresses (e.g., 10.0 => 10.0.0.0)
+            if (url.Contains(host) && IsValidIP(host))
+            {
+                return true;
+            }
+
             // The TLD (last part) should not be numeric and should generally be at least two letters long.
             string tld = hostParts.Last();
             if (tld.Length < 2 || tld.Any(char.IsDigit))
@@ -443,6 +462,17 @@ namespace GooglePal
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Checks if a IP string is valid <br>
+        /// FROM: [https://stackoverflow.com/a/78374757]
+        /// </summary>
+        /// <param name="ip">The IP to validate</param>
+        /// <returns>True if the IP is valid, false otherwise</returns>
+        public static bool IsValidIP(string ipAddress)
+        {
+            return IPAddress.TryParse(ipAddress, out IPAddress? ip) && ip.ToString() == ipAddress;
         }
 
     }
