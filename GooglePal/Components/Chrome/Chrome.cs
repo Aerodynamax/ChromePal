@@ -1,8 +1,6 @@
 ﻿using GooglePal.Pages;
-using Microsoft.CommandPalette.Extensions.Toolkit;
 using Newtonsoft.Json;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -10,8 +8,6 @@ using System.Linq;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Reflection.Metadata.Ecma335;
-using System.Security.Authentication;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -21,45 +17,34 @@ using static GooglePal.Components.ForceShowWindow;
 
 namespace GooglePal
 {
-    internal class Chrome : Google
+    internal partial class Chrome : Google
     {
-        public class Profile
-        {
-            public required string Name { get; set; }
-            public required string Folder { get; set; }
-            public required string ProfilePicturePath { get; set; }
-            public required string TaskbarIconPath { get; set; }
-
-
-            // override equality check for things like FirstOrDefault
-            public static bool operator ==(Profile? a, Profile? b) => a?.Equals(b) == true;
-            public static bool operator !=(Profile? a, Profile? b) => !a?.Equals(b) == true;
-            public override bool Equals(object? obj) => obj != null && Equals(obj as Profile);
-            public bool Equals(Profile? other) => !object.ReferenceEquals(other, null) && Folder == other.Folder;
-            public override int GetHashCode() => Folder.GetHashCode();
-        }
-
         // profiles
         private string ProfileConfigPath = default!;
 
         public List<Profile> Profiles = [];
 
+        // static defaults / path
+        private static string defaultProfilePicture = "\uE77B";
+        private static readonly string LOCAL_APPDATA_PATH = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        private static readonly string CHROME_USER_DATA_FOLDER = Path.Combine(LOCAL_APPDATA_PATH, "Google", "Chrome", "User Data");
+
+        // json
+        public static readonly JsonSerializerSettings JSON_SETTINGS = new()
+        {
+            NullValueHandling = NullValueHandling.Ignore,
+            Formatting = Formatting.Indented,
+            TypeNameHandling = TypeNameHandling.None,
+            DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate,
+            MissingMemberHandling = MissingMemberHandling.Ignore,
+            FloatParseHandling = FloatParseHandling.Double
+        };
 
         // history
         private string HistoryConfigPath = default!;
         private int HistoryLength = -1;
 
         public List<Suggestion> History = [];
-
-
-        // json
-        JsonSerializerSettings JsonOptions = new JsonSerializerSettings
-        {
-            NullValueHandling = NullValueHandling.Ignore,
-            Formatting = Formatting.Indented,
-            TypeNameHandling = TypeNameHandling.None,
-            DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate
-        };
 
 
         // suggestions
@@ -103,13 +88,14 @@ namespace GooglePal
 
             // process suggestions
             foreach (Suggestion suggestion in suggestions)
-                {
-                    // change type to history if suggestion in history
-                    if (History.Any(item => item == suggestion))
-                        suggestion.Type = SuggestionType.History;
+            {
+                // change type to history if suggestion in history
+                if (History.Any(item => item == suggestion)) // only websites & queries are saved so no need to filter special results
+                    suggestion.Type = SuggestionType.History;
 
                 // remove knowledge panels if not required
                 // (since the request still needs to happen for definitions, this doesn't needlessly send requests)
+                // TODO: make this actually not send the requests
                 if (!IncludeKnowledgePanels && suggestion.Type == SuggestionType.KnowledgePanel)
                     suggestion.Type = SuggestionType.Query;
 
@@ -119,80 +105,6 @@ namespace GooglePal
             }
 
             return suggestions;
-        }
-
-
-        /// <summary>
-        ///     Gets a list of Chrome's profile names and their respective directory names.
-        /// </summary>
-        /// <returns>A List of Chrome.Profile objects with the Name and Folder of each profile.</returns>
-        public static List<Profile> GetChromeProfiles()
-        {
-            string defaultProfilePicture = "\uE77B";
-
-            List<Profile> profiles = [];
-
-            string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            string localStateFilePath = Path.Combine(appDataPath, "Google", "Chrome", "User Data", "Local State");
-
-            if (!File.Exists(localStateFilePath))
-            {
-                return profiles;
-            }
-
-            // read local state file
-            string jsonContent = File.ReadAllText(localStateFilePath);
-
-            using (JsonDocument doc = JsonDocument.Parse(jsonContent))
-            {
-                var root = doc.RootElement;
-                if (root.TryGetProperty("profile", out var profile) &&
-                    profile.TryGetProperty("info_cache", out var infoCache))
-                {
-                    // enumerate every profile
-                    foreach (JsonProperty property in infoCache.EnumerateObject())
-                    {
-                        // get profile directory
-                        string directoryName = property.Name;
-
-                        if (property.Value.TryGetProperty("name", out var nameElement))
-                        {
-                            // get profile name
-                            string? displayName = nameElement.GetString();
-
-                            if (string.IsNullOrEmpty(displayName))
-                                continue;
-
-                            if (property.Value.TryGetProperty("gaia_picture_file_name", out var iconRelativePathElement))
-                            {
-                                // get profile icon
-                                string? iconPath = iconRelativePathElement.GetString();
-
-                                if (iconPath == null)
-                                    continue;
-
-                                iconPath = Path.Combine(appDataPath, "Google", "Chrome", "User Data", directoryName, iconPath);
-
-                                string taskbarIconPath = Path.Combine(appDataPath, "Google", "Chrome", "User Data", directoryName, "Google Profile.ico");
-
-                                // add profile
-                                profiles.Add(
-                                    new()
-                                    {
-                                        Name = displayName,
-                                        Folder = directoryName,
-                                        ProfilePicturePath = iconPath ?? defaultProfilePicture,
-                                        TaskbarIconPath = taskbarIconPath
-                                    }
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            return profiles;
         }
 
 
@@ -336,7 +248,7 @@ namespace GooglePal
         /// </summary>
         public void SaveProfiles()
         {
-            string jsonString = JsonConvert.SerializeObject(Profiles, JsonOptions);
+            string jsonString = JsonConvert.SerializeObject(Profiles, JSON_SETTINGS);
 
             Debug.WriteLine($"Saving to: {ProfileConfigPath}");
 
@@ -348,28 +260,20 @@ namespace GooglePal
         /// </summary>
         public List<Profile> LoadProfiles()
         {
-            var allProfiles = GetChromeProfiles();
+            List<Profile> allProfiles = GetAllProfiles();
             try
             {
                 Debug.WriteLine($"Loading profiles from: {ProfileConfigPath}");
 
                 string jsonString = File.ReadAllText(ProfileConfigPath);
 
-                List<Profile> profiles = JsonConvert.DeserializeObject<List<Profile>>(jsonString, JsonOptions) ?? [];
+                List<Profile> profiles = JsonConvert.DeserializeObject<List<Profile>>(jsonString, JSON_SETTINGS) ?? [];
 
-                // add any missing profiles
+                // sort the profiles in the correct order
                 allProfiles = allProfiles.OrderBy(p => profiles.IndexOf(p)).ToList();
-                //profiles.AddRange(
-                //    allProfiles.Where(profile =>
-                //        !profiles.Select(knownProfile => knownProfile.Name)
-                //                 .Contains(profile.Name)
-                //    )
-                //);
 
                 // return profiles
                 return allProfiles;
-
-
             }
             catch (FileNotFoundException ex)
             {
@@ -378,6 +282,46 @@ namespace GooglePal
                 return allProfiles;
             }
         }
+
+
+        /// <summary>
+        ///     Gets a list of Chrome's profile names and their respective directory names.
+        /// </summary>
+        /// <returns>A List of Chrome.Profile objects with the Name and Folder of each profile.</returns>
+        public static List<Profile> GetAllProfiles()
+        {
+            List<Profile> profiles = [];
+
+            string localStateFilePath = Path.Combine(CHROME_USER_DATA_FOLDER, "Local State");
+
+            // return empty if empty
+            if (!File.Exists(localStateFilePath)) return profiles;
+
+            // read local state file
+            string jsonContent = File.ReadAllText(localStateFilePath);
+
+            using (JsonDocument doc = JsonDocument.Parse(jsonContent))
+            {
+                var root = doc.RootElement;
+                if (root.TryGetProperty("profile", out JsonElement profileData) &&
+                    profileData.TryGetProperty("info_cache", out JsonElement profilesDict))
+                {
+                    // enumerate every profile
+                    foreach (JsonProperty property in profilesDict.EnumerateObject())
+                    {
+                        // add profile
+                        Profile? profile = Profile.ParseChromeProfileJSON(property);
+
+                        if (profile != null)
+                            profiles.Add(profile);
+                    }
+                }
+            }
+
+            return profiles;
+        }
+
+
 
         /// <summary>
         ///     Remove all instances of a given query from ChromePal's history.
@@ -398,7 +342,7 @@ namespace GooglePal
         /// </summary>
         public void SaveHistory()
         {
-            string jsonString = JsonConvert.SerializeObject(value: History.Take(HistoryLength), settings: JsonOptions);
+            string jsonString = JsonConvert.SerializeObject(value: History.Take(HistoryLength), settings: JSON_SETTINGS);
 
             Debug.WriteLine($"Saving to: {HistoryConfigPath}");
 
@@ -421,7 +365,7 @@ namespace GooglePal
 
                 string jsonString = File.ReadAllText(HistoryConfigPath);
 
-                List<Suggestion> history = JsonConvert.DeserializeObject<List<Suggestion>>(jsonString, settings: JsonOptions) ?? [];
+                List<Suggestion> history = JsonConvert.DeserializeObject<List<Suggestion>>(jsonString, settings: JSON_SETTINGS) ?? [];
 
                 // remove duplicates (and only take history length)
                 history = history
@@ -440,6 +384,8 @@ namespace GooglePal
                 return [];
             }
         }
+
+
 
 
         /// <summary>

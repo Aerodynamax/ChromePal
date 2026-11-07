@@ -201,23 +201,23 @@ public class SettingsManager : JsonSettingsManager
 
         Settings.SettingsChanged += (s, a) =>
         {
-            OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, ShowOpening, IncludeKnowledgePanels, KnowledgePanelImages));
+            OnSettingsSaved?.Invoke(this, new(SETTINGS_CONFIG_DIRECTORY, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, ShowOpening, IncludeKnowledgePanels, KnowledgePanelImages));
             
             SaveSettings();
         };
     }
 
-    private static string settingsConfigDirectory = Utilities.BaseSettingsPath("ChromePal");
+    internal static readonly string SETTINGS_CONFIG_DIRECTORY = Utilities.BaseSettingsPath("ChromePal");
 
     internal static string SettingsJsonPath()
     {
-        Directory.CreateDirectory(settingsConfigDirectory);
-        return Path.Combine(settingsConfigDirectory, "settings.json");
+        Directory.CreateDirectory(SETTINGS_CONFIG_DIRECTORY);
+        return Path.Combine(SETTINGS_CONFIG_DIRECTORY, "settings.json");
     }
 
     // send history update (used in initialisation)
     public void SendSavedUpdateEvent()
     {
-        OnSettingsSaved?.Invoke(this, new(settingsConfigDirectory, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, ShowOpening, IncludeKnowledgePanels, KnowledgePanelImages));
+        OnSettingsSaved?.Invoke(this, new(SETTINGS_CONFIG_DIRECTORY, OpenInNewBrowser, HistoryLength, SuggestionLength, ShowLoading, ShowOpening, IncludeKnowledgePanels, KnowledgePanelImages));
     }
 }

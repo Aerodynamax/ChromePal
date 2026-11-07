@@ -14,6 +14,10 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Remove="Assets\ChromeDefaultPFP.png" />
+    <Content Remove="Assets\ChromePFPMask.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <Content Include="Assets\SplashScreen.scale-200.png" />
@@ -44,8 +48,15 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <PackageReference Include="Microsoft.Web.WebView2" />
     <PackageReference Include="Newtonsoft.Json" />
+    <PackageReference Include="System.Drawing.Common" />
     <PackageReference Include="System.Text.Json" />
     <PackageReference Include="Shmuelie.WinRTServer" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\ChromeDefaultPFP.png" />
+    <EmbeddedResource Include="Assets\ChromePFPMask.png">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </EmbeddedResource>
   </ItemGroup>
 
   <!--

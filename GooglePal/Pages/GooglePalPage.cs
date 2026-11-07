@@ -2,16 +2,13 @@
 using GooglePal.Pages;
 using Microsoft.CommandPalette.Extensions;
 using Microsoft.CommandPalette.Extensions.Toolkit;
-using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using Windows.System;
-using static GooglePal.Chrome;
 using static GooglePal.Google;
 
 namespace GooglePal;
@@ -82,6 +79,10 @@ internal sealed partial class GooglePalPage : DynamicListPage
     private ListItem CreateSearchListItem(Suggestion searchItem)
     {
         string url = searchItem.IsURL ? searchItem.Query : $"https://www.google.com/search?q={HttpUtility.UrlEncode(searchItem.Query)}";
+
+        // TEMP: i want og definitions :) - must make toggleable in settings
+        if (searchItem.Type == SuggestionType.Definition)
+            url += "&tbs=1";
 
         List<CommandContextItem> otherCommands = [];
 
@@ -266,7 +267,7 @@ internal sealed partial class GooglePalPage : DynamicListPage
         if (historyItems.Length > 0 && suggestions.Count > 0)
         {
             // remove history suggestions
-            suggestions.RemoveAll(suggestion => historyItems.Any(history => history == suggestion));
+            suggestions.RemoveAll(suggestion => historyItems.Any(history => history == suggestion && (suggestion.Type <= SuggestionType.History)));
 
 
             // find exact matching URLs to place above user query

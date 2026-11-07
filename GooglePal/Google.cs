@@ -1,4 +1,6 @@
-﻿using Microsoft.CommandPalette.Extensions.Toolkit;
+﻿using GooglePal.Components;
+using Microsoft.CommandPalette.Extensions.Toolkit;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -41,6 +43,8 @@ namespace GooglePal
             public override bool Equals(object? obj) => obj != null && Equals(obj as Suggestion);
             public bool Equals(Suggestion? other) => !object.ReferenceEquals(other, null) && Query == other.Query;
             public override int GetHashCode() => Query.GetHashCode();
+
+            public override string ToString() => Title ?? Query;
         }
 
         private HttpClient client = new();
@@ -80,34 +84,47 @@ namespace GooglePal
         {
             // return from cached suggestions if available
             CachedQuery? cached = CachedQueries.FirstOrDefault(item => item.Query == query);
-            if (cached != null) return cached.Suggestions;
+            if (cached != null)
+                // to list required because history tampers with the object & it's a reference so history items build up
+                return cached.Suggestions.ToList();
 
             List<Suggestion> suggestions = [];
             string url = $"https://www.google.com/complete/search?output=chrome&q={HttpUtility.UrlEncode(query)}";
 
-            try
-            {
-                HttpContent response = (await client.GetAsync(url, cancellationToken)).Content;
+            // start other suggestions going while main ones are
+            Task<List<Suggestion>>? otherSuggestions = null;
+            Task<List<Suggestion>>? definitions = null;
 
-                // deserialise
-                var json = JsonDocument.Parse(response.ReadAsStringAsync(cancellationToken).Result);
+            // get Google.com & definitions suggestions (non URLs) before starting the other one bcuz in my mind the network request can be parallelised
+            if (suggestionTypes.Contains(SuggestionType.KnowledgePanel))
+                otherSuggestions = GetQueriesAdditionalAsync(query: query, cancellationToken: cancellationToken);
 
-                var suggestionQueries = json.RootElement.EnumerateArray().ElementAt(1);
-                var suggestionType = json.RootElement.EnumerateArray().ElementAt(4).GetProperty("google:suggesttype");
+            if (suggestionTypes.Contains(SuggestionType.Definition))
+                definitions = GetDefinitionsAsync(query: query, maxCount: 2, cancellationToken: cancellationToken);
+
+                try
+                {
+                    HttpContent response = (await client.GetAsync(url, cancellationToken)).Content;
+
+                    // deserialise
+                    var json = JsonDocument.Parse(response.ReadAsStringAsync(cancellationToken).Result);
+
+                    var suggestionQueries = json.RootElement.EnumerateArray().ElementAt(1);
+                    var suggestionType = json.RootElement.EnumerateArray().ElementAt(4).GetProperty("google:suggesttype");
 
 
-                // format query strings
-                string[] queryTitles = [
-                    ..suggestionQueries
-                        .EnumerateArray()
-                        .Select(o => o.GetString())
-                        .Where(s => s != null)
-                        .Select(s => s!)
-                ];
+                    // format query strings
+                    string[] queryTitles = [
+                        ..suggestionQueries
+                            .EnumerateArray()
+                            .Select(o => o.GetString())
+                            .Where(s => s != null)
+                            .Select(s => s!)
+                    ];
 
-                // format query types
-                SuggestionType[] queryTypes = [
-                    ..suggestionType
+                    // format query types
+                    SuggestionType[] queryTypes = [
+                        ..suggestionType
                         .EnumerateArray()
                         .Select(o => o.GetString())
                         .Where(s => s != null)
@@ -122,72 +139,217 @@ namespace GooglePal
                                 default: return SuggestionType.Query;
                             }
                         })
-                ];
+                    ];
 
-                // create suggestions from results
-                foreach (var _query in queryTitles.Index())
-                {
-                    SuggestionType type = queryTypes.ElementAt(_query.Index);
-
-                    string queryText = _query.Item;
-
-                    // remove "http://" from links
-                    if (type == SuggestionType.Website)
+                    // create suggestions from results
+                    foreach (var _query in queryTitles.Index())
                     {
-                        Uri website = new Uri(_query.Item);
-                        queryText = website.Host + website.PathAndQuery + website.Fragment;
+                        SuggestionType type = queryTypes.ElementAt(_query.Index);
 
-                        queryText = queryText.TrimEnd('/');
+                        string queryText = _query.Item;
+
+                        // remove "http://" from links
+                        if (type == SuggestionType.Website)
+                        {
+                            Uri website = new Uri(_query.Item);
+                            queryText = website.Host + website.PathAndQuery + website.Fragment;
+
+                            queryText = queryText.TrimEnd('/');
+                        }
+
+                        // only add suggestions that are wanted
+                        if (suggestionTypes.Contains(type))
+                            suggestions.Add(new Suggestion()
+                            {
+                                Query = queryText,
+                                Type = type,
+                                IsURL = type == SuggestionType.Website
+                            });
                     }
 
-                    // only add suggestions that are wanted
-                    if (suggestionTypes.Contains(type))
-                        suggestions.Add(new Suggestion()
+                    // add knowledge panels
+                    if (otherSuggestions != null) // && suggestionTypes.Contains(SuggestionType.KnowledgePanel)
+                        foreach (var specialSuggestion in otherSuggestions.Result)
                         {
-                            Query = queryText,
-                            Type = type,
-                            IsURL = type == SuggestionType.Website
-                        });
+                            int index = suggestions.FindIndex(item => item == specialSuggestion);
+
+                            // replace non-special with special if present
+                            if (index != -1)
+                                suggestions[index] = specialSuggestion;
+
+                            // also add if query
+                            if (specialSuggestion.Query == query)
+                                suggestions.Insert(index: 0, item: specialSuggestion);
+                        }
+                    
+
+                    if (definitions != null) // && suggestionTypes.Contains(SuggestionType.Definition)
+                        foreach (var definitionSuggestion in definitions.Result)
+                        {
+                            int index = suggestions.FindIndex(item => QueryToDefinitionPhrase(item.Query) == definitionSuggestion.Query);
+                            
+                            // skip failed attempts
+                            if (index == -1 && definitionSuggestion.Query != query) continue;
+
+                            //definitionSuggestion.Query = suggestions[index].Query;
+
+                            // add if query
+                            if (definitionSuggestion.Query == query)
+                                suggestions.Insert(index: 0, item: definitionSuggestion);
+
+                            // replace non-special with special if present (and not already used)
+                            else if (index != -1)
+                                suggestions[index] = definitionSuggestion;
+                        }
+
+                    // promote definitions to top
+                    suggestions = suggestions.OrderByDescending(item => item.Type == SuggestionType.Definition).ToList();
+
+                    // add to cache
+                    CachedQueries.Add(new()
+                    {
+                        Query = query,
+                        Suggestions = suggestions
+                    });
+
+                }
+                catch (Exception ex) { Debug.WriteLine($"ERROR: {ex}"); }
+
+            // to list required because history tampers with the object & it's a reference so history items build up
+            return suggestions.ToList();
+        }
+
+        #region definitions
+
+        // [{"word":"tree trunk","score":291087,"tags":["pron:T R IY1 T R AH1 NG K "],"defs":["n\t(botany) The main structural member of a tree. "]}]
+        record DatamuseDefinition(string word, int score, string[] tags, string[]? defs)
+        {
+            public Suggestion? ToSuggestion()
+            {
+                // get pronounciation
+                string pronounciation = this.tags.FirstOrDefault(text => text.StartsWith("ipa_pron:", StringComparison.CurrentCulture), "ipa_pron:").Replace("ipa_pron:", "");
+                if (!string.IsNullOrEmpty(pronounciation))
+                {
+                    pronounciation = $"/{pronounciation}/";
                 }
 
-                List<Suggestion> otherSuggestions = [];
-
-                // get Google.com suggestions (non URLs)
-                if (suggestionTypes.Contains(SuggestionType.KnowledgePanel) || suggestionTypes.Contains(SuggestionType.Definition))
-                    otherSuggestions = await GetQueriesAdditionalAsync(query: query, cancellationToken: cancellationToken);
-
-                // add knowledge panels
-                if (suggestionTypes.Contains(SuggestionType.KnowledgePanel))
-                    foreach (var specialSuggestion in otherSuggestions.Where(item => item.Type != SuggestionType.Definition))
-                    {
-                        int index = suggestions.FindIndex(item => item == specialSuggestion);
-
-                        // replace non-special with special if present
-                        if (index != -1)
-                            suggestions[index] = specialSuggestion;
-
-                        // also add if query
-                        if (specialSuggestion.Query == query)
-                            suggestions.Insert(index: 0, item: specialSuggestion);
-                    }
-
-                // add definition
-                Suggestion? definition = otherSuggestions.FirstOrDefault(item => item.Type == SuggestionType.Definition);
-
-                if (definition != null && suggestionTypes.Contains(SuggestionType.Definition))
-                    suggestions.Insert(index: 0, item: definition);
-
-                // add to cache
-                CachedQueries.Add(new()
+                Suggestion sug = new Suggestion()
                 {
-                    Query = query,
-                    Suggestions = suggestions
-                });
+                    Query = this.word,
+                    Type = SuggestionType.Definition,
+                    IsURL = false,
+
+                    Title = string.IsNullOrEmpty(this.word) ? null : $"{this.word} {pronounciation}",
+                    Description = this.defs?[0].Split('\t', StringSplitOptions.TrimEntries)[1]
+                };
+
+                // only return if good
+                if (string.IsNullOrEmpty(sug.Title) || string.IsNullOrEmpty(sug.Description))
+                    return null;
+                return sug;
+            }
+        }
+
+        private record CachedDatamuseDefinition(string query, DatamuseDefinition[] results);
+
+        private static List<CachedDatamuseDefinition> cachedDefinitionQueries = [];
+
+        public virtual async Task<List<Suggestion>> GetDefinitionsAsync(string query, int maxCount = 5, CancellationToken cancellationToken = default)
+        {
+            query = QueryToDefinitionPhrase(query) ?? "";
+            
+            // remove bad queries
+            if (string.IsNullOrEmpty(query))
+                return [];
+
+
+            // use known query results
+            List<DatamuseDefinition> results = GetCachedSimilarDefinitions(query, maxCount);
+
+            if (results.Count >= maxCount)
+                return [.. results.Select(item => item.ToSuggestion()).Where(item => item is not null)];
+
+
+            // fill with new results
+            maxCount -= results.Count;
+
+            string url = $"https://api.datamuse.com/words?md=rd&ipa=1&max={maxCount}&sp={HttpUtility.UrlEncode(query)}";
+
+            try
+            {
+                // get new from API
+                HttpContent response = (await client.GetAsync(url, cancellationToken)).Content;
+                string resp = (await response.ReadAsStringAsync(cancellationToken));
+                results.AddRange(JsonConvert.DeserializeObject<DatamuseDefinition[]>(resp) ?? []);
+
+                // cache
+                cachedDefinitionQueries.Add(new(query, results.ToArray()));
+                
             }
             catch (Exception ex) { Debug.WriteLine($"ERROR: {ex}"); }
 
-            return suggestions;
+            // return old + new (if available)
+            return [.. results.Select(item => item.ToSuggestion()).Where(item => item is not null)];
         }
+
+        private static List<DatamuseDefinition> GetCachedSimilarDefinitions(string word, int maxCount = 5)
+        {
+            IEnumerable<DatamuseDefinition> cachedDefinitions = cachedDefinitionQueries.SelectMany(cacheItem => cacheItem.results);
+
+            List<DatamuseDefinition> results = [];
+
+            if (cachedDefinitionQueries.Count > 0)
+            {
+                foreach (var cachedDef in cachedDefinitions)
+                {
+                    if (Levenshtein.ComputeDistanceLevenshtein(word, cachedDef.word) < 2)
+                        results.Add(cachedDef);
+
+                    if (results.Count > maxCount)
+                        break;
+                }
+            }
+
+            return results;
+        }
+
+
+        private static string? QueryToDefinitionPhrase(string query)
+        {
+            if (query.StartsWith("def", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(3);
+            else if (query.StartsWith("define", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(6);
+            else if (query.StartsWith("what is", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(7);
+            else if (query.StartsWith("what was", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(8);
+            else if (query.StartsWith("what does", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(9);
+            else if (query.StartsWith("meaning of", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(10);
+
+            if (query.EndsWith("mean", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(0, query.Length - 4);
+            else if (query.EndsWith("means", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(0, query.Length - 5);
+            else if (query.EndsWith("meaning", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(0, query.Length - 7);
+            else if (query.EndsWith("definition", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(0, query.Length - 11);
+            else if (query.EndsWith("define", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(0, query.Length - 6);
+            else if (query.EndsWith("def", StringComparison.CurrentCultureIgnoreCase))
+                query = query.Substring(0, query.Length - 3);
+
+            query = query.Trim();
+
+            if (string.IsNullOrEmpty(query)) return null;
+
+            return query;
+        }
+
+        #endregion definitions
 
         public virtual async Task<List<Suggestion>> GetQueriesAdditionalAsync(string query, CancellationToken cancellationToken = default)
         {
@@ -224,9 +386,10 @@ namespace GooglePal
                     // special results have 4 items
                     if (suggestion.Count() < 4) continue;
 
-                    // definitions
-                    if (suggestion.LastOrDefault().TryGetProperty("ansa", value: out JsonElement definition))
-                        suggestions.Add(ParseDefinition(definition));
+                    // definitions have been fully removed by Google for quite some time now :(
+                    //// definitions
+                    //if (suggestion.LastOrDefault().TryGetProperty("ansa", value: out JsonElement definition))
+                    //    suggestions.Add(ParseDefinition(definition));
 
                     // special results
                     else if (suggestion.LastOrDefault().TryGetProperty("lm", value: out JsonElement specialQuery))
@@ -347,6 +510,8 @@ namespace GooglePal
             // remove html tags (bold)
             query = Regex.Replace(query, "<[^>]*>", string.Empty);
 
+            // TODO: fix this not getting the subtext for "OpenAI"
+
             return new()
             {
                 Query = query,
@@ -396,6 +561,8 @@ namespace GooglePal
                 IsURL = isWebsite
             };
         }
+
+
 
         /// <summary>
         /// Checks if a URL string is valid

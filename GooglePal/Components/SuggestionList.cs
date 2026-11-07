@@ -167,7 +167,7 @@ namespace GooglePal.Components
             if (above != null && ItemsLength > 1 && query == currQuery)
             {
                 // add user query if not exact match
-                if (Query.Title != above.Title)
+                if (Query.TextToSuggest != above.TextToSuggest)
                     below = below.Prepend(Query).ToArray();
 
                 // add above to suggestions
